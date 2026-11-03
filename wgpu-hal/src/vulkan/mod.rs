@@ -799,6 +799,14 @@ pub struct AccelerationStructure {
     compacted_size_query: Option<vk::QueryPool>,
 }
 
+impl AccelerationStructure {
+    /// # Safety
+    /// - The acceleration structure handle must not be manually destroyed
+    pub unsafe fn raw_handle(&self) -> vk::AccelerationStructureKHR {
+        self.raw
+    }
+}
+
 impl crate::DynAccelerationStructure for AccelerationStructure {}
 
 #[derive(Debug)]
