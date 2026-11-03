@@ -2460,7 +2460,11 @@ impl super::Instance {
             // VeriSilicon's proprietary driver, as on NXP's i.MX 8 SoCs, advertises timeline
             // semaphores but crashes in `vkQueueSubmit` when wgpu uses them. It reports
             // `VK_DRIVER_ID_MESA_RADV` as its driver ID, so only the vendor ID identifies it.
+            // Nor on Imagination's PowerVR: MediaTek's PowerVR drivers dereference null
+            // inside `vkQueueSubmit` with them (Firebase Test Lab, moto g54 5G and moto g
+            // play 2023); fences instead.
             timeline_semaphores: phd_capabilities.properties.vendor_id != db::verisilicon::VENDOR
+                && phd_capabilities.properties.vendor_id != db::imgtec::VENDOR
                 && match phd_features.timeline_semaphore {
                     Some(features) => features.timeline_semaphore == vk::TRUE,
                     None => phd_features
