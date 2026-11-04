@@ -48,6 +48,44 @@ changes, kept for reference.
     `RayTracingPass::trace_rays_indirect`, and timestamp writes on a ray
     tracing pass. An indirect trace's size is not checked against the
     device's limits, as an indirect dispatch's is.
+  - Procedural geometry: `@intersection` stages, `reportIntersection`,
+    `var<ray_hit_attribute>`, and `RayTracingIntersectionDescriptor::Procedural`
+    hit groups for AABB `Blas`es; `rayQueryCandidateAabbOpaque` in ray
+    queries. Each hit group's attributes are checked against its stages'.
+  - Callables: `@callable` stages, `executeCallable`, `callable_data` and
+    `incoming_callable_data`, and the shader binding table's callable
+    region (`RayTracingPipelineDescriptor::callables`).
+  - Per-instance hit groups and flags: `TlasInstance::flags`
+    (`TlasInstanceFlags`: culling, facing, opacity), traces stepping hit
+    groups by geometry (`traceRay(.., offset, stride, miss)`,
+    `RayTracingPipelineDescriptor::max_geometry_stride`), and every hit
+    group an instance can reach checked, at each trace, to be of its
+    geometry's kind. `incoming_ray_flags` in the stages.
+  - Position fetch in ray tracing pipelines: `hit_triangle_vertex_positions`,
+    through structures built with `ALLOW_RAY_HIT_VERTEX_RETURN`.
+  - DirectX 12: naga's HLSL writer writes ray tracing stages as DXIL library
+    exports, and wgpu-hal makes them state objects, traced with
+    `DispatchRays` and, indirectly, `ExecuteIndirect`. DXC compiles them
+    with `-disable-payload-qualifiers`.
+  - Motion blur (`Features::EXPERIMENTAL_RAY_TRACING_MOTION_BLUR`, Vulkan's
+    `VK_NV_ray_tracing_motion_blur`): `AccelerationStructureFlags::ALLOW_MOTION`,
+    `BlasTriangleGeometry::end_vertex_buffer`, `TlasInstance::end_transform`
+    (matrix motion), `traceRayMotion` and `current_ray_time`. A top level
+    that moves needs `VkAccelerationStructureMotionInfoNV` on creation: the
+    device is lost without it.
+  - Hit objects (`Features::EXPERIMENTAL_RAY_TRACING_INVOCATION_REORDER`,
+    Vulkan's `VK_NV_ray_tracing_invocation_reorder`): `hit_object`,
+    `hitObjectTraceRay`, records, queries, `hitObjectExecute` and
+    `reorderThread`. On NVIDIA's 621.01 the hit object's transforms read as
+    zeros; its other values are right.
+  - Opacity micromaps (`Features::EXPERIMENTAL_RAY_TRACING_OPACITY_MICROMAP`,
+    `VK_EXT_opacity_micromap`): `BlasTriangleGeometrySizeDescriptor::opacity_micromap`,
+    `BlasTriangleGeometry::opacity_micromap`, the instance flags, and
+    `RAY_FLAG_FORCE_OPACITY_MICROMAP_2_STATE`. wgpu-hal's `Blas` keeps a
+    micromap for each geometry with one, made with it and built before it in
+    its own scratch; such a `Blas` is not compacted.
+  - naga's HLSL snapshots take ray tracing stages (`library` in the `.ron`,
+    checked as `lib_6_x` without an entry point).
 - **Incoming ray payloads through compaction**: naga's compaction, which
   wgpu-core runs on every pipeline stage, neither kept a ray tracing
   stage's incoming payload nor remapped its handle, so a miss stage that
@@ -72,4 +110,7 @@ an intersection index, and naga's `RayQueryFunction::Begin`. Its WebGPU
 bindings need js-sys/web-sys 0.3.104 or later.
 
 naga's snapshot tests (`cargo test -p naga --test naga snapshots`) need
-`spirv-cross` and `spirv-as` from the Vulkan SDK on the path.
+`spirv-cross` and `spirv-as` from the Vulkan SDK on the path. The GPU tests
+need a `.gpuconfig`: `WGPU_INFO_SAVE_GPUCONFIG_REPORT=1 cargo test -p wgpu-info
+-- generate_gpuconfig_report` writes one, and without nextest they run one at
+a time (`cargo test -p wgpu-test --test wgpu-gpu -- <filter> --test-threads=1`).
