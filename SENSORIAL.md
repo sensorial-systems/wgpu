@@ -84,6 +84,15 @@ changes, kept for reference.
     `RAY_FLAG_FORCE_OPACITY_MICROMAP_2_STATE`. wgpu-hal's `Blas` keeps a
     micromap for each geometry with one, made with it and built before it in
     its own scratch; such a `Blas` is not compacted.
+  - Spheres and linear swept spheres
+    (`Features::EXPERIMENTAL_RAY_TRACING_LINEAR_SWEPT_SPHERES`,
+    `VK_NV_ray_tracing_linear_swept_spheres` with `VK_KHR_maintenance5`):
+    `BlasGeometrySizeDescriptors::Spheres`, `BlasGeometries::SphereGeometries`,
+    the `hit_is_sphere`, `hit_is_lss`, `hit_sphere_*`, `hit_lss_*` built-ins
+    and the hit objects' sphere queries. ash has no bindings for the
+    extension: wgpu-hal's are in `vulkan/lss.rs`. Pipelines take its flag
+    through `VkPipelineCreateFlags2CreateInfo`. NVIDIA's hit kinds for them
+    are 0xCE and 0xCC.
   - naga's HLSL snapshots take ray tracing stages (`library` in the `.ron`,
     checked as `lib_6_x` without an entry point).
 - **Incoming ray payloads through compaction**: naga's compaction, which

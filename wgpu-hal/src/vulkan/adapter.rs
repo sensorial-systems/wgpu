@@ -119,6 +119,13 @@ pub struct PhysicalDeviceFeatures {
     /// Features provided by `VK_EXT_opacity_micromap`.
     opacity_micromap: Option<vk::PhysicalDeviceOpacityMicromapFeaturesEXT<'static>>,
 
+    /// Features provided by `VK_NV_ray_tracing_linear_swept_spheres`.
+    linear_swept_spheres: Option<super::lss::PhysicalDeviceFeatures>,
+
+    /// Features provided by `VK_KHR_maintenance5`, promoted to Vulkan 1.4:
+    /// enabled only for the pipeline flag of linear swept spheres.
+    maintenance5: Option<vk::PhysicalDeviceMaintenance5FeaturesKHR<'static>>,
+
     /// Features provided by `VK_KHR_shader_atomic_int64`, promoted to Vulkan 1.2.
     shader_atomic_int64: Option<vk::PhysicalDeviceShaderAtomicInt64Features<'static>>,
 
@@ -221,6 +228,12 @@ impl PhysicalDeviceFeatures {
             info = info.push_next(feature);
         }
         if let Some(ref mut feature) = self.opacity_micromap {
+            info = info.push_next(feature);
+        }
+        if let Some(ref mut feature) = self.linear_swept_spheres {
+            info = info.push_next(feature);
+        }
+        if let Some(ref mut feature) = self.maintenance5 {
             info = info.push_next(feature);
         }
         if let Some(ref mut feature) = self.shader_image_atomic_int64 {
@@ -598,6 +611,18 @@ impl PhysicalDeviceFeatures {
             },
             opacity_micromap: if enabled_extensions.contains(&ext::opacity_micromap::NAME) {
                 Some(vk::PhysicalDeviceOpacityMicromapFeaturesEXT::default().micromap(true))
+            } else {
+                None
+            },
+            linear_swept_spheres: if enabled_extensions.contains(&super::lss::NAME) {
+                Some(super::lss::PhysicalDeviceFeatures::enabled())
+            } else {
+                None
+            },
+            maintenance5: if requested_features
+                .contains(wgt::Features::EXPERIMENTAL_RAY_TRACING_LINEAR_SWEPT_SPHERES)
+            {
+                Some(vk::PhysicalDeviceMaintenance5FeaturesKHR::default().maintenance5(true))
             } else {
                 None
             },
@@ -1062,6 +1087,14 @@ impl PhysicalDeviceFeatures {
                 self.opacity_micromap
                     .is_some_and(|micromap| micromap.micromap != 0),
             );
+            // Pipelines are allowed spheres only with a flag of
+            // `VK_KHR_maintenance5`'s.
+            features.set(
+                F::EXPERIMENTAL_RAY_TRACING_LINEAR_SWEPT_SPHERES,
+                self.linear_swept_spheres
+                    .is_some_and(|spheres| spheres.supported())
+                    && caps.supports_extension(khr::maintenance5::NAME),
+            );
         }
 
         let rg11b10ufloat_renderable = supports_format(
@@ -1518,6 +1551,12 @@ impl PhysicalDeviceProperties {
 
         if requested_features.contains(wgt::Features::EXPERIMENTAL_RAY_TRACING_OPACITY_MICROMAP) {
             extensions.push(ext::opacity_micromap::NAME)
+        }
+
+        if requested_features.contains(wgt::Features::EXPERIMENTAL_RAY_TRACING_LINEAR_SWEPT_SPHERES)
+        {
+            extensions.push(super::lss::NAME);
+            extensions.push(khr::maintenance5::NAME);
         }
 
         // Require `VK_EXT_conservative_rasterization` if the associated feature was requested
@@ -2278,6 +2317,13 @@ impl super::InstanceShared {
                 features2 = features2.push_next(next);
             }
 
+            if capabilities.supports_extension(super::lss::NAME) {
+                let next = features
+                    .linear_swept_spheres
+                    .insert(super::lss::PhysicalDeviceFeatures::default());
+                features2 = features2.push_next(next);
+            }
+
             // `VK_KHR_maintenance4` is promoted to 1.3
             if capabilities.device_api_version >= vk::API_VERSION_1_3
                 || capabilities.supports_extension(khr::maintenance4::NAME)
@@ -2998,6 +3044,10 @@ impl super::Adapter {
             }
             if features.contains(wgt::Features::EXPERIMENTAL_RAY_TRACING_OPACITY_MICROMAP) {
                 capabilities.push(spv::Capability::RayTracingOpacityMicromapEXT);
+            }
+            if features.contains(wgt::Features::EXPERIMENTAL_RAY_TRACING_LINEAR_SWEPT_SPHERES) {
+                capabilities.push(spv::Capability::RayTracingSpheresGeometryNV);
+                capabilities.push(spv::Capability::RayTracingLinearSweptSpheresGeometryNV);
             }
             if features.contains(wgt::Features::EXPERIMENTAL_RAY_HIT_VERTEX_RETURN) {
                 capabilities.push(spv::Capability::RayQueryPositionFetchKHR);

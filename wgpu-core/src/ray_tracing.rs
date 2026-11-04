@@ -49,6 +49,10 @@ pub enum CreateBlasError {
     TooManyPrimitives(u32, u32),
     #[error("A BLAS with opacity micromaps is not compacted: it was created allowing compaction")]
     OpacityMicromapCompaction,
+    #[error("Successive linear swept spheres are made of indices: their geometry has none")]
+    SuccessiveSpheresWithoutIndices,
+    #[error("A BLAS of spheres does not move")]
+    MovingSpheres,
 }
 
 impl WebGpuError for CreateBlasError {
@@ -60,7 +64,9 @@ impl WebGpuError for CreateBlasError {
             | Self::InvalidVertexFormat(..)
             | Self::TooManyGeometries(..)
             | Self::TooManyPrimitives(..)
-            | Self::OpacityMicromapCompaction => ErrorType::Validation,
+            | Self::OpacityMicromapCompaction
+            | Self::SuccessiveSpheresWithoutIndices
+            | Self::MovingSpheres => ErrorType::Validation,
         }
     }
 }
@@ -197,8 +203,18 @@ pub enum BuildAccelerationStructureError {
     )]
     TlasDependentMissingVertexReturn(ResourceErrorIdent, ResourceErrorIdent),
 
-    #[error("Blas {0:?} geometry kind at creation does not match build (triangles vs AABBs)")]
+    #[error(
+        "Blas {0:?} geometry kind at creation does not match build (triangles, AABBs or spheres)"
+    )]
     BlasGeometryKindMismatch(ResourceErrorIdent),
+
+    #[error(
+        "Blas {0:?} was created with other linear swept spheres than a geometry is built with"
+    )]
+    IncompatibleSpheres(ResourceErrorIdent),
+
+    #[error("Blas {0:?} radius stride {1} is invalid (must be >= 4 and a multiple of 4)")]
+    InvalidRadiusStride(ResourceErrorIdent, BufferAddress),
 
     #[error(
         "Blas {0:?} build AABB primitive count is greater than creation count (creation: {1}, build: {2})"
@@ -283,7 +299,9 @@ impl WebGpuError for BuildAccelerationStructureError {
             | Self::BlasGeometryKindMismatch(..)
             | Self::IncompatibleBlasAabbPrimitiveCount(..)
             | Self::UnalignedAabbPrimitiveOffset(..)
-            | Self::InvalidAabbStride(..) => ErrorType::Validation,
+            | Self::InvalidAabbStride(..)
+            | Self::IncompatibleSpheres(..)
+            | Self::InvalidRadiusStride(..) => ErrorType::Validation,
         }
     }
 }
@@ -376,9 +394,25 @@ pub struct BlasAabbGeometry<'a, Buffer = Arc<resource::Buffer>> {
     pub primitive_offset: u32,
 }
 
+/// A geometry of spheres or linear swept spheres: each vertex a center in
+/// `vertex_buffer` and a radius, an `f32`, in `radius_buffer`, both from
+/// `first_vertex` on.
+#[derive(Debug)]
+pub struct BlasSphereGeometry<'a, Buffer = Arc<resource::Buffer>> {
+    pub size: &'a wgt::BlasSphereGeometrySizeDescriptor,
+    pub vertex_buffer: Buffer,
+    pub first_vertex: u32,
+    pub vertex_stride: BufferAddress,
+    pub radius_buffer: Buffer,
+    pub radius_stride: BufferAddress,
+    pub index_buffer: Option<Buffer>,
+    pub first_index: Option<u32>,
+}
+
 pub enum BlasGeometries<'a, Buffer = Arc<resource::Buffer>> {
     TriangleGeometries(Box<dyn Iterator<Item = BlasTriangleGeometry<'a, Buffer>> + 'a>),
     AabbGeometries(Box<dyn Iterator<Item = BlasAabbGeometry<'a, Buffer>> + 'a>),
+    SphereGeometries(Box<dyn Iterator<Item = BlasSphereGeometry<'a, Buffer>> + 'a>),
 }
 
 pub struct BlasBuildEntry<'a, Blas = Arc<resource::Blas>, Buffer = Arc<resource::Buffer>> {
@@ -492,11 +526,47 @@ pub struct OwnedBlasAabbGeometry<R: ReferenceType> {
 
 pub type ArcBlasAabbGeometry = OwnedBlasAabbGeometry<ArcReferences>;
 
+/// Like [`BlasSphereGeometry`], but with owned data.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", apply(serde_object_reference_struct))]
+pub struct OwnedBlasSphereGeometry<R: ReferenceType> {
+    pub size: wgt::BlasSphereGeometrySizeDescriptor,
+    pub vertex_buffer: R::Buffer,
+    pub first_vertex: u32,
+    pub vertex_stride: BufferAddress,
+    pub radius_buffer: R::Buffer,
+    pub radius_stride: BufferAddress,
+    pub index_buffer: Option<R::Buffer>,
+    pub first_index: Option<u32>,
+}
+
+impl<R: ReferenceType> OwnedBlasSphereGeometry<R> {
+    /// The same geometry, of other buffers.
+    pub fn map<S: ReferenceType>(
+        self,
+        mut buffer: impl FnMut(R::Buffer) -> S::Buffer,
+    ) -> OwnedBlasSphereGeometry<S> {
+        OwnedBlasSphereGeometry {
+            size: self.size,
+            vertex_buffer: buffer(self.vertex_buffer),
+            first_vertex: self.first_vertex,
+            vertex_stride: self.vertex_stride,
+            radius_buffer: buffer(self.radius_buffer),
+            radius_stride: self.radius_stride,
+            index_buffer: self.index_buffer.map(buffer),
+            first_index: self.first_index,
+        }
+    }
+}
+
+pub type ArcBlasSphereGeometry = OwnedBlasSphereGeometry<ArcReferences>;
+
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", apply(serde_object_reference_struct))]
 pub enum OwnedBlasGeometries<R: ReferenceType> {
     TriangleGeometries(Vec<OwnedBlasTriangleGeometry<R>>),
     AabbGeometries(Vec<OwnedBlasAabbGeometry<R>>),
+    SphereGeometries(Vec<OwnedBlasSphereGeometry<R>>),
 }
 
 pub type ArcBlasGeometries = OwnedBlasGeometries<ArcReferences>;

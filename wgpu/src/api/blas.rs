@@ -19,6 +19,18 @@ static_assertions::assert_impl_all!(BlasAABBGeometrySizeDescriptor: Send, Sync);
 /// Minimum stride for AABB geometry (24 bytes: two `vec3<f32>`).
 pub use wgt::AABB_GEOMETRY_MIN_STRIDE;
 
+/// Descriptor for the size defining attributes of a geometry of spheres or linear swept spheres,
+/// for a bottom level acceleration structure.
+pub type BlasSphereGeometrySizeDescriptor = wgt::BlasSphereGeometrySizeDescriptor;
+static_assertions::assert_impl_all!(BlasSphereGeometrySizeDescriptor: Send, Sync);
+
+/// How a geometry's vertices make linear swept spheres.
+pub type LinearSweptSpheres = wgt::LinearSweptSpheres;
+/// Which vertices are the ends of a linear swept sphere.
+pub type LinearSweptSphereIndexing = wgt::LinearSweptSphereIndexing;
+/// Which ends of linear swept spheres are capped by spheres.
+pub type LinearSweptSphereEndCaps = wgt::LinearSweptSphereEndCaps;
+
 /// Descriptor for the size defining attributes, for a bottom level acceleration structure.
 pub type BlasGeometrySizeDescriptors = wgt::BlasGeometrySizeDescriptors;
 static_assertions::assert_impl_all!(BlasGeometrySizeDescriptors: Send, Sync);
@@ -223,6 +235,33 @@ pub struct BlasAabbGeometry<'a> {
 }
 static_assertions::assert_impl_all!(BlasAabbGeometry<'_>: WasmNotSendSync);
 
+/// Definition for a geometry of spheres or linear swept spheres for a bottom level acceleration
+/// structure: see [`BlasSphereGeometrySizeDescriptor`].
+///
+/// Each vertex is a center, a `vec3<f32>` in `vertex_buffer`, and a radius, an `f32` in
+/// `radius_buffer`, both from `first_vertex` on.
+#[derive(Debug)]
+pub struct BlasSphereGeometry<'a> {
+    /// Sub descriptor for the size defining attributes of this geometry.
+    pub size: &'a BlasSphereGeometrySizeDescriptor,
+    /// Vertex buffer: the centers.
+    pub vertex_buffer: &'a Buffer,
+    /// Offset into the vertex and radius buffers as a number of vertices.
+    pub first_vertex: u32,
+    /// Vertex stride, at least 12 and a multiple of 4.
+    pub vertex_stride: wgt::BufferAddress,
+    /// Radius buffer: the radii.
+    pub radius_buffer: &'a Buffer,
+    /// Radius stride, at least 4 and a multiple of 4.
+    pub radius_stride: wgt::BufferAddress,
+    /// Index buffer (optional).
+    pub index_buffer: Option<&'a Buffer>,
+    /// Index buffer offset as a number of indices (optional, required if an index buffer is
+    /// provided).
+    pub first_index: Option<u32>,
+}
+static_assertions::assert_impl_all!(BlasSphereGeometry<'_>: WasmNotSendSync);
+
 /// Contains the sets of geometry that go into a [Blas].
 #[derive(Debug)]
 pub enum BlasGeometries<'a> {
@@ -230,6 +269,8 @@ pub enum BlasGeometries<'a> {
     TriangleGeometries(Vec<BlasTriangleGeometry<'a>>),
     /// Procedural AABB geometry variant.
     AabbGeometries(Vec<BlasAabbGeometry<'a>>),
+    /// Sphere and linear swept sphere geometry variant.
+    SphereGeometries(Vec<BlasSphereGeometry<'a>>),
 }
 static_assertions::assert_impl_all!(BlasGeometries<'_>: WasmNotSendSync);
 

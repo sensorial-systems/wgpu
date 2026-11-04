@@ -156,6 +156,10 @@ pub fn features_to_naga_capabilities(
         features.intersects(wgt::Features::EXPERIMENTAL_RAY_TRACING_OPACITY_MICROMAP),
     );
     caps.set(
+        Caps::RAY_TRACING_LINEAR_SWEPT_SPHERES,
+        features.intersects(wgt::Features::EXPERIMENTAL_RAY_TRACING_LINEAR_SWEPT_SPHERES),
+    );
+    caps.set(
         Caps::TEXTURE_EXTERNAL,
         features.intersects(wgt::Features::EXTERNAL_TEXTURE),
     );

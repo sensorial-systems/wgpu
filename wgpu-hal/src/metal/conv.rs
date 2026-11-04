@@ -456,6 +456,7 @@ pub fn map_acceleration_structure_descriptor<'a>(
             )));
             descriptor.into_super()
         }
+        crate::AccelerationStructureEntries::Spheres(_) => unreachable!("Metal has no spheres"),
         crate::AccelerationStructureEntries::AABBs(entries) => {
             let geometry_descriptors = entries
                 .iter()

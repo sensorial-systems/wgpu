@@ -124,7 +124,14 @@ impl MaxFragmentShaderInputDeduction {
             | BuiltIn::HitBarycentrics
             | BuiltIn::IncomingRayFlags
             | BuiltIn::HitTriangleVertexPositions
-            | BuiltIn::CurrentRayTime => return None,
+            | BuiltIn::CurrentRayTime
+            | BuiltIn::HitIsSphere
+            | BuiltIn::HitIsLss
+            | BuiltIn::HitSpherePosition
+            | BuiltIn::HitSphereRadius
+            | BuiltIn::HitLssPositions
+            | BuiltIn::HitLssRadii
+            | BuiltIn::HitLssValue => return None,
         }))
     }
 }

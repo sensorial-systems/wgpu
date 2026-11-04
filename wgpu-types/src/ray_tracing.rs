@@ -74,6 +74,99 @@ pub struct BlasAABBGeometrySizeDescriptor {
 /// Minimum stride for AABB geometry (24 bytes: two `vec3<f32>`).
 pub const AABB_GEOMETRY_MIN_STRIDE: crate::BufferAddress = 24;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+/// Descriptor for all size defining attributes of a single geometry of spheres, or of linear
+/// swept spheres, inside a bottom level acceleration structure.
+///
+/// Each vertex is a center and a radius: a sphere, or one end of a linear swept sphere -- the
+/// two spheres at its ends and the cone between them, tangent to both. Rays hit them without
+/// intersection stages, through hit groups of triangles, and never from inside.
+///
+/// Requires [`Features::EXPERIMENTAL_RAY_TRACING_LINEAR_SWEPT_SPHERES`].
+///
+/// [`Features::EXPERIMENTAL_RAY_TRACING_LINEAR_SWEPT_SPHERES`]: crate::Features::EXPERIMENTAL_RAY_TRACING_LINEAR_SWEPT_SPHERES
+pub struct BlasSphereGeometrySizeDescriptor {
+    /// Format of a center, must be [`VertexFormat::Float32x3`].
+    pub vertex_format: crate::VertexFormat,
+    /// Number of vertices.
+    pub vertex_count: u32,
+    /// Format of an index. Only needed if an index buffer is used.
+    /// If `index_format` is provided `index_count` is required.
+    pub index_format: Option<crate::IndexFormat>,
+    /// Number of indices. Only needed if an index buffer is used.
+    /// If `index_count` is provided `index_format` is required.
+    pub index_count: Option<u32>,
+    /// How the vertices make linear swept spheres; `None` for a geometry of spheres, one for
+    /// each vertex, or each index.
+    pub linear_swept: Option<LinearSweptSpheres>,
+    /// Flags for the geometry.
+    pub flags: AccelerationStructureGeometryFlags,
+}
+
+impl BlasSphereGeometrySizeDescriptor {
+    /// How many spheres or linear swept spheres the geometry has.
+    pub const fn primitive_count(&self) -> u32 {
+        let count = match self.index_count {
+            Some(count) => count,
+            None => self.vertex_count,
+        };
+        LinearSweptSpheres::primitive_count(self.linear_swept, count)
+    }
+}
+
+/// How a geometry's vertices make linear swept spheres.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct LinearSweptSpheres {
+    /// Which vertices are the ends of each.
+    pub indexing: LinearSweptSphereIndexing,
+    /// Which of their ends are capped by spheres.
+    pub end_caps: LinearSweptSphereEndCaps,
+}
+
+impl LinearSweptSpheres {
+    /// How many spheres, or linear swept spheres made as `linear_swept` says, `count` vertices or
+    /// indices are.
+    pub const fn primitive_count(linear_swept: Option<Self>, count: u32) -> u32 {
+        match linear_swept {
+            None => count,
+            Some(Self {
+                indexing: LinearSweptSphereIndexing::List,
+                ..
+            }) => count / 2,
+            Some(Self {
+                indexing: LinearSweptSphereIndexing::Successive,
+                ..
+            }) => count,
+        }
+    }
+}
+
+/// Which vertices are the ends of a linear swept sphere.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub enum LinearSweptSphereIndexing {
+    /// Each two vertices, or each two indices, are one's two ends, as a line list's.
+    #[default]
+    List,
+    /// Each index `i` is one's first end, and `i + 1` its second: indices one apart make a
+    /// chain. Needs an index buffer.
+    Successive,
+}
+
+/// Which ends of linear swept spheres are capped by spheres.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub enum LinearSweptSphereEndCaps {
+    /// None: each is the cone between its ends' spheres only.
+    None,
+    /// Both ends of each, but within a chain of [`LinearSweptSphereIndexing::Successive`] ones
+    /// only the first one's first end and every one's second.
+    #[default]
+    Chained,
+}
+
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 /// Descriptor for all size defining attributes of all geometries inside a bottom level acceleration structure.
@@ -87,6 +180,11 @@ pub enum BlasGeometrySizeDescriptors {
     AABBs {
         /// Descriptor for each AABB geometry.
         descriptors: Vec<BlasAABBGeometrySizeDescriptor>,
+    },
+    /// Sphere and linear swept sphere geometry version.
+    Spheres {
+        /// Descriptor for each geometry of spheres or linear swept spheres.
+        descriptors: Vec<BlasSphereGeometrySizeDescriptor>,
     },
 }
 
@@ -257,6 +355,8 @@ pub enum AccelerationStructureType {
     Triangles,
     /// The types of the acceleration structure are axis aligned bounding boxes
     AABBs,
+    /// The types of the acceleration structure are spheres or linear swept spheres
+    Spheres,
     /// The types of the acceleration structure are instances
     Instances,
 }

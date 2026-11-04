@@ -3159,11 +3159,13 @@ pub struct GetAccelerationStructureBuildSizesDescriptor<'a, B: DynBuffer + ?Size
 /// * `Instances` - Multiple instances for a top level acceleration structure
 /// * `Triangles` - Multiple triangle meshes for a bottom level acceleration structure
 /// * `AABBs` - List of list of axis aligned bounding boxes for a bottom level acceleration structure
+/// * `Spheres` - Geometries of spheres or linear swept spheres for a bottom level acceleration structure
 #[derive(Debug)]
 pub enum AccelerationStructureEntries<'a, B: DynBuffer + ?Sized> {
     Instances(AccelerationStructureInstances<'a, B>),
     Triangles(Vec<AccelerationStructureTriangles<'a, B>>),
     AABBs(Vec<AccelerationStructureAABBs<'a, B>>),
+    Spheres(Vec<AccelerationStructureSpheres<'a, B>>),
 }
 
 /// * `first_vertex` - offset in the vertex buffer (as number of vertices)
@@ -3205,6 +3207,35 @@ pub struct AccelerationStructureOpacityMicromap<'a, B: DynBuffer + ?Sized> {
     /// transparent, -4 unknown and opaque); without them, its own index.
     pub indices: Option<(&'a B, wgt::BufferAddress)>,
     pub usage: &'a [wgt::OpacityMicromapUsage],
+}
+
+/// A geometry of spheres or linear swept spheres: each vertex a center, and
+/// a radius (an `f32`) in `radius_buffer`, both from `first_vertex` on.
+/// Buffers are `None` where only sizes are asked for.
+#[derive(Clone, Debug)]
+pub struct AccelerationStructureSpheres<'a, B: DynBuffer + ?Sized> {
+    pub vertex_buffer: Option<&'a B>,
+    pub vertex_format: wgt::VertexFormat,
+    pub first_vertex: u32,
+    pub vertex_count: u32,
+    pub vertex_stride: wgt::BufferAddress,
+    pub radius_buffer: Option<&'a B>,
+    pub radius_stride: wgt::BufferAddress,
+    pub indices: Option<AccelerationStructureTriangleIndices<'a, B>>,
+    /// How the vertices make linear swept spheres; `None` for spheres.
+    pub linear_swept: Option<wgt::LinearSweptSpheres>,
+    pub flags: AccelerationStructureGeometryFlags,
+}
+
+impl<B: DynBuffer + ?Sized> AccelerationStructureSpheres<'_, B> {
+    /// How many spheres or linear swept spheres the geometry has.
+    pub fn primitive_count(&self) -> u32 {
+        let count = self
+            .indices
+            .as_ref()
+            .map_or(self.vertex_count, |indices| indices.count);
+        wgt::LinearSweptSpheres::primitive_count(self.linear_swept, count)
+    }
 }
 
 /// * `offset` - offset in bytes

@@ -384,6 +384,13 @@ impl IntoTrace for crate::ray_tracing::OwnedBlasGeometries<ArcReferences> {
                     geos.into_iter().map(|g| g.into_trace()).collect(),
                 )
             }
+            crate::ray_tracing::OwnedBlasGeometries::SphereGeometries(geos) => {
+                crate::ray_tracing::OwnedBlasGeometries::SphereGeometries(
+                    geos.into_iter()
+                        .map(|g| g.map(|buffer| buffer.into_trace()))
+                        .collect(),
+                )
+            }
         }
     }
 }

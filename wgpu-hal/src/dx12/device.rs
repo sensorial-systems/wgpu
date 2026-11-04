@@ -2918,6 +2918,7 @@ impl crate::Device for super::Device {
                 };
                 num_desc = geometry_desc.len() as u32;
             }
+            AccelerationStructureEntries::Spheres(_) => unreachable!("DirectX 12 has no spheres"),
             AccelerationStructureEntries::AABBs(aabbs) => {
                 geometry_desc = Vec::with_capacity(aabbs.len());
                 for aabb in aabbs {

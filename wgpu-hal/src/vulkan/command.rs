@@ -624,6 +624,8 @@ impl crate::CommandEncoder for super::CommandEncoder {
             Box<vk::AccelerationStructureTrianglesOpacityMicromapEXT>,
             Vec<vk::MicromapUsageEXT>,
         )>::new();
+        // The data of sphere geometries, chained to them.
+        let mut sphere_storage = Vec::<super::lss::GeometryData>::new();
         // The micromaps' builds, which come before the structures': each in
         // its structure's scratch, one after another.
         let mut micromap_builds = Vec::<vk::MicromapBuildInfoEXT>::new();
@@ -820,6 +822,38 @@ impl crate::CommandEncoder for super::CommandEncoder {
                     }
                     (geometries, ranges)
                 }
+                crate::AccelerationStructureEntries::Spheres(ref in_geometries) => {
+                    let mut ranges = smallvec::SmallVec::<
+                        [vk::AccelerationStructureBuildRangeInfoKHR; CAPACITY_INNER],
+                    >::with_capacity(in_geometries.len());
+                    let mut geometries = smallvec::SmallVec::<
+                        [vk::AccelerationStructureGeometryKHR; CAPACITY_INNER],
+                    >::with_capacity(in_geometries.len());
+                    for spheres in in_geometries {
+                        // The first vertex and index are in the addresses, so
+                        // that the ranges start at zero.
+                        let first = u64::from(spheres.first_vertex);
+                        let (geometry, data) = super::lss::geometry(
+                            spheres,
+                            super::lss::Addresses {
+                                vertices: get_device_address(spheres.vertex_buffer)
+                                    + first * spheres.vertex_stride,
+                                radii: get_device_address(spheres.radius_buffer)
+                                    + first * spheres.radius_stride,
+                                indices: spheres.indices.as_ref().map_or(0, |indices| {
+                                    get_device_address(indices.buffer) + u64::from(indices.offset)
+                                }),
+                            },
+                        );
+                        sphere_storage.push(data);
+                        geometries.push(geometry);
+                        ranges.push(
+                            vk::AccelerationStructureBuildRangeInfoKHR::default()
+                                .primitive_count(spheres.primitive_count()),
+                        );
+                    }
+                    (geometries, ranges)
+                }
             };
 
             ranges_storage.push(ranges);
@@ -904,6 +938,7 @@ impl crate::CommandEncoder for super::CommandEncoder {
         }
         drop(motion_storage);
         drop(micromap_storage);
+        drop(sphere_storage);
     }
 
     unsafe fn place_acceleration_structure_barrier(

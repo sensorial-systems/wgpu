@@ -2426,6 +2426,24 @@ impl dispatch::CommandEncoderInterface for CoreCommandEncoder {
                             });
                     wgc::ray_tracing::BlasGeometries::AabbGeometries(Box::new(iter))
                 }
+                crate::BlasGeometries::SphereGeometries(ref sphere_geometries) => {
+                    let iter =
+                        sphere_geometries
+                            .iter()
+                            .map(|sg| wgc::ray_tracing::BlasSphereGeometry {
+                                size: sg.size,
+                                vertex_buffer: sg.vertex_buffer.inner.as_core().wgpu_buffer.clone(),
+                                first_vertex: sg.first_vertex,
+                                vertex_stride: sg.vertex_stride,
+                                radius_buffer: sg.radius_buffer.inner.as_core().wgpu_buffer.clone(),
+                                radius_stride: sg.radius_stride,
+                                index_buffer: sg
+                                    .index_buffer
+                                    .map(|buf| buf.inner.as_core().wgpu_buffer.clone()),
+                                first_index: sg.first_index,
+                            });
+                    wgc::ray_tracing::BlasGeometries::SphereGeometries(Box::new(iter))
+                }
             };
             wgc::ray_tracing::BlasBuildEntry {
                 blas: e.blas.inner.as_core().wgpu_blas.clone(),

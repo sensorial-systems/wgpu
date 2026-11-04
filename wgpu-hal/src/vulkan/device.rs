@@ -2644,13 +2644,27 @@ impl crate::Device for super::Device {
             true => flags | vk::PipelineCreateFlags::RAY_TRACING_OPACITY_MICROMAP_EXT,
             false => flags,
         };
+        // Spheres need a flag that only `VK_KHR_maintenance5`'s wider flags
+        // have, which then stand for all of them.
+        let mut flags2 = vk::PipelineCreateFlags2CreateInfoKHR::default().flags(
+            vk::PipelineCreateFlags2KHR::from_raw(u64::from(flags.as_raw()))
+                | super::lss::PIPELINE_CREATE_2_ALLOW_SPHERES,
+        );
         let create_infos = [{
-            vk::RayTracingPipelineCreateInfoKHR::default()
+            let info = vk::RayTracingPipelineCreateInfoKHR::default()
                 .flags(flags)
                 .layout(desc.layout.raw)
                 .max_pipeline_ray_recursion_depth(desc.max_recursion_depth)
                 .stages(&stages)
-                .groups(&groups)
+                .groups(&groups);
+            match self
+                .shared
+                .features
+                .contains(wgt::Features::EXPERIMENTAL_RAY_TRACING_LINEAR_SWEPT_SPHERES)
+            {
+                true => info.push_next(&mut flags2),
+                false => info,
+            }
         }];
 
         let pipeline_cache = desc
@@ -2921,6 +2935,8 @@ impl crate::Device for super::Device {
             Box<vk::AccelerationStructureTrianglesOpacityMicromapEXT>,
             Vec<vk::MicromapUsageEXT>,
         )>::new();
+        // The data of sphere geometries, chained to them.
+        let mut sphere_storage = Vec::<super::lss::GeometryData>::new();
         // Their micromaps' builds come first, in the structure's scratch.
         let mut micromap_scratch = 0;
 
@@ -3052,6 +3068,27 @@ impl crate::Device for super::Device {
 
                     geometries.push(geometry);
                     primitive_counts.push(aabb.count);
+                }
+                (geometries, primitive_counts)
+            }
+            crate::AccelerationStructureEntries::Spheres(ref in_geometries) => {
+                let mut primitive_counts =
+                    smallvec::SmallVec::<[u32; CAPACITY]>::with_capacity(in_geometries.len());
+                let mut geometries = smallvec::SmallVec::<
+                    [vk::AccelerationStructureGeometryKHR; CAPACITY],
+                >::with_capacity(in_geometries.len());
+                for spheres in in_geometries {
+                    let (geometry, data) = super::lss::geometry(
+                        spheres,
+                        super::lss::Addresses {
+                            vertices: 0,
+                            radii: 0,
+                            indices: 0,
+                        },
+                    );
+                    sphere_storage.push(data);
+                    geometries.push(geometry);
+                    primitive_counts.push(spheres.primitive_count());
                 }
                 (geometries, primitive_counts)
             }

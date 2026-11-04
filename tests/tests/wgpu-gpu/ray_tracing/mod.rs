@@ -22,6 +22,7 @@ mod pipelines;
 mod reorder;
 mod scene;
 mod shader;
+mod spheres;
 
 pub fn all_tests(tests: &mut Vec<wgpu_test::GpuTestInitializer>) {
     as_aabb::all_tests(tests);
@@ -35,6 +36,7 @@ pub fn all_tests(tests: &mut Vec<wgpu_test::GpuTestInitializer>) {
     shader::all_tests(tests);
     pipelines::all_tests(tests);
     reorder::all_tests(tests);
+    spheres::all_tests(tests);
 }
 
 fn acceleration_structure_limits() -> wgpu::Limits {

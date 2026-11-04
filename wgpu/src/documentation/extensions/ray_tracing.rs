@@ -517,11 +517,28 @@ geometry -- an alpha test without any-hit stages for most of a texture. `RAY_FLA
 makes unknown micro-triangles what they lean to; [`TlasInstanceFlags::DISABLE_OPACITY_MICROMAPS`](wgt::TlasInstanceFlags::DISABLE_OPACITY_MICROMAPS)
 ignores the micromaps. A [`Blas`] keeps its micromaps itself, built with it; one with micromaps is not compacted.
 
+#### Spheres and linear swept spheres
+
+With [`Features::EXPERIMENTAL_RAY_TRACING_LINEAR_SWEPT_SPHERES`] (Vulkan, `VK_NV_ray_tracing_linear_swept_spheres`
+and `VK_KHR_maintenance5`), a [`Blas`] is of spheres or linear swept spheres
+(`BlasGeometrySizeDescriptors::Spheres`, built from `BlasGeometries::SphereGeometries`): each vertex a center and a
+radius, and a linear swept sphere the spheres at a segment's two ends and the cone between them, tangent to both --
+hair, curves, tubes. `LinearSweptSpheres` says which vertices are the ends -- two at a time, as a line list, or
+each index and the next vertex, which chains them -- and which ends are capped. Rays hit them without intersection
+stages, through hit groups of triangles, and never from inside, nor through an end without its cap. With
+`enable wgpu_ray_tracing_linear_swept_spheres`, the hit stages read `hit_is_sphere`, `hit_is_lss`,
+`hit_sphere_position` and `hit_sphere_radius`, `hit_lss_positions` and `hit_lss_radii` (the ends, in object space),
+and `hit_lss_value`, how far along the swept sphere from its first end, which is the hit attribute and so cannot be
+read with `hit_barycentrics`; and hit objects `hitObjectIsSphereHit`, `hitObjectIsLssHit`, `hitObjectSpherePosition`,
+`hitObjectSphereRadius`, `hitObjectLssPositions` (a `mat2x3<f32>`, the ends its columns) and `hitObjectLssRadii` (a
+`vec2<f32>`). Their `hit_kind` is NVIDIA's: 0xCE a sphere's, 0xCC a linear swept sphere's. Ray queries have no
+functions for them, and a structure of spheres does not move.
+
 #### Backends
 
 Vulkan traces ray tracing pipelines with `VK_KHR_ray_tracing_pipeline`. DirectX 12 traces them as DXR 1.1
-state objects, the stages compiled into DXIL libraries (DXC); it has no motion blur, and no hit objects before
-shader model 6.9.
+state objects, the stages compiled into DXIL libraries (DXC); it has no motion blur, no spheres, and no hit
+objects before shader model 6.9.
 
 ### Acceleration structure tags
 

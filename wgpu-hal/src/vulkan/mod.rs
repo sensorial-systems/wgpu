@@ -31,6 +31,7 @@ mod descriptor;
 mod device;
 mod drm;
 mod instance;
+mod lss;
 mod memory;
 mod pnext_chain;
 mod sampler;

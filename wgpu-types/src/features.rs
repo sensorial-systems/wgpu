@@ -1044,6 +1044,27 @@ features! {
         #[name("wgpu-ray-tracing-opacity-micromap")]
         const EXPERIMENTAL_RAY_TRACING_OPACITY_MICROMAP = 1 << 35;
 
+        /// ***THIS IS EXPERIMENTAL:*** Features enabled by this may have
+        /// major bugs in them and are expected to be subject to breaking changes, suggestions
+        /// for the API exposed by this should be posted on [the ray-tracing issue](https://github.com/gfx-rs/wgpu/issues/6762)
+        ///
+        /// Allows bottom level acceleration structures of spheres and of linear swept spheres --
+        /// segments swept by a sphere whose radius changes along them, as hair and curves are
+        /// drawn -- which rays hit without intersection stages. See
+        /// [`BlasGeometrySizeDescriptors::Spheres`]. `@builtin(hit_is_sphere)`, the other hit
+        /// built-ins of spheres, and their hit object queries with
+        /// `enable wgpu_ray_tracing_linear_swept_spheres;`.
+        ///
+        /// Supported platforms:
+        /// - Vulkan (with [VK_NV_ray_tracing_linear_swept_spheres](https://registry.khronos.org/vulkan/specs/latest/man/html/VK_NV_ray_tracing_linear_swept_spheres.html)
+        ///   and `VK_KHR_maintenance5`)
+        ///
+        /// This is a native only feature
+        ///
+        /// [`BlasGeometrySizeDescriptors::Spheres`]: super::BlasGeometrySizeDescriptors::Spheres
+        #[name("wgpu-ray-tracing-linear-swept-spheres")]
+        const EXPERIMENTAL_RAY_TRACING_LINEAR_SWEPT_SPHERES = 1 << 44;
+
         /// Enables multiview in mesh shader pipelines
         ///
         /// Supported platforms:
@@ -1639,7 +1660,8 @@ impl Features {
                     | FeaturesWGPU::EXPERIMENTAL_RAY_TRACING_PIPELINES.bits()
                     | FeaturesWGPU::EXPERIMENTAL_RAY_TRACING_MOTION_BLUR.bits()
                     | FeaturesWGPU::EXPERIMENTAL_RAY_TRACING_INVOCATION_REORDER.bits()
-                    | FeaturesWGPU::EXPERIMENTAL_RAY_TRACING_OPACITY_MICROMAP.bits(),
+                    | FeaturesWGPU::EXPERIMENTAL_RAY_TRACING_OPACITY_MICROMAP.bits()
+                    | FeaturesWGPU::EXPERIMENTAL_RAY_TRACING_LINEAR_SWEPT_SPHERES.bits(),
             ),
             FeaturesWebGPU::empty(),
         )

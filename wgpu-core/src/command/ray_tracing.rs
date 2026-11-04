@@ -19,9 +19,9 @@ use crate::{
     device::queue::TempResource,
     init_tracker::MemoryInitKind,
     ray_tracing::{
-        ArcBlasAabbGeometry, ArcBlasBuildEntry, ArcBlasGeometries, ArcBlasTriangleGeometry,
-        ArcTlasPackage, BlasBuildEntry, BlasGeometries, BuildAccelerationStructureError,
-        OwnedBlasBuildEntry, OwnedTlasPackage,
+        ArcBlasAabbGeometry, ArcBlasBuildEntry, ArcBlasGeometries, ArcBlasSphereGeometry,
+        ArcBlasTriangleGeometry, ArcTlasPackage, BlasBuildEntry, BlasGeometries,
+        BuildAccelerationStructureError, OwnedBlasBuildEntry, OwnedTlasPackage,
     },
     resource::{Blas, BlasCompactState, Labeled, StagingBuffer, Tlas, Trackable},
     scratch::ScratchBuffer,
@@ -178,6 +178,28 @@ impl super::CommandEncoder {
                                 })
                                 .collect::<Result<_, BuildAccelerationStructureError>>()?;
                             ArcBlasGeometries::AabbGeometries(aabb_geo)
+                        }
+                        BlasGeometries::SphereGeometries(sphere_geometries) => {
+                            let sphere_geo = sphere_geometries
+                                .map(|sg| {
+                                    sg.vertex_buffer.check_is_valid()?;
+                                    sg.radius_buffer.check_is_valid()?;
+                                    if let Some(ref index_buffer) = sg.index_buffer {
+                                        index_buffer.check_is_valid()?;
+                                    }
+                                    Ok(ArcBlasSphereGeometry {
+                                        size: sg.size.clone(),
+                                        vertex_buffer: sg.vertex_buffer,
+                                        first_vertex: sg.first_vertex,
+                                        vertex_stride: sg.vertex_stride,
+                                        radius_buffer: sg.radius_buffer,
+                                        radius_stride: sg.radius_stride,
+                                        index_buffer: sg.index_buffer,
+                                        first_index: sg.first_index,
+                                    })
+                                })
+                                .collect::<Result<_, BuildAccelerationStructureError>>()?;
+                            ArcBlasGeometries::SphereGeometries(sphere_geo)
                         }
                     };
                     let blas = blas_entry.blas;
@@ -364,9 +386,15 @@ pub(crate) fn build_acceleration_structures(
                     wgt::BlasGeometrySizeDescriptors::AABBs { ref descriptors } => {
                         descriptors.len() as u32
                     }
+                    wgt::BlasGeometrySizeDescriptors::Spheres { ref descriptors } => {
+                        descriptors.len() as u32
+                    }
                 },
+                // Rays hit spheres as they do triangles, without intersection
+                // stages, through hit groups of triangles.
                 required_intersection_ty: match blas.sizes {
-                    wgt::BlasGeometrySizeDescriptors::Triangles { .. } => {
+                    wgt::BlasGeometrySizeDescriptors::Triangles { .. }
+                    | wgt::BlasGeometrySizeDescriptors::Spheres { .. } => {
                         crate::ray_tracing_pipeline::RayTracingIntersectionType::Triangle
                     }
                     wgt::BlasGeometrySizeDescriptors::AABBs { .. } => {
@@ -1393,9 +1421,234 @@ fn iter_blas<'snatch_guard: 'buffers, 'buffers>(
                     });
                 }
             }
+            ArcBlasGeometries::SphereGeometries(sphere_geometries) => {
+                let wgt::BlasGeometrySizeDescriptors::Spheres {
+                    descriptors: ref size_descs,
+                } = blas.sizes
+                else {
+                    return Err(BuildAccelerationStructureError::BlasGeometryKindMismatch(
+                        blas.error_ident(),
+                    ));
+                };
+                let mut sphere_entries =
+                    Vec::<hal::AccelerationStructureSpheres<dyn hal::DynBuffer>>::new();
+
+                for (i, spheres) in sphere_geometries.iter().enumerate() {
+                    let Some(size_desc) = size_descs.get(i) else {
+                        return Err(BuildAccelerationStructureError::IncompatibleBlasBuildSizes(
+                            blas.error_ident(),
+                        ));
+                    };
+                    if size_desc.flags != spheres.size.flags {
+                        return Err(BuildAccelerationStructureError::IncompatibleBlasFlags(
+                            blas.error_ident(),
+                            size_desc.flags,
+                            spheres.size.flags,
+                        ));
+                    }
+                    if size_desc.vertex_count < spheres.size.vertex_count {
+                        return Err(
+                            BuildAccelerationStructureError::IncompatibleBlasVertexCount(
+                                blas.error_ident(),
+                                size_desc.vertex_count,
+                                spheres.size.vertex_count,
+                            ),
+                        );
+                    }
+                    if size_desc.vertex_format != spheres.size.vertex_format {
+                        return Err(BuildAccelerationStructureError::DifferentBlasVertexFormats(
+                            blas.error_ident(),
+                            size_desc.vertex_format,
+                            spheres.size.vertex_format,
+                        ));
+                    }
+                    if size_desc.linear_swept != spheres.size.linear_swept {
+                        return Err(BuildAccelerationStructureError::IncompatibleSpheres(
+                            blas.error_ident(),
+                        ));
+                    }
+                    match (size_desc.index_count, spheres.size.index_count) {
+                        (Some(_), None) | (None, Some(_)) => {
+                            return Err(
+                                BuildAccelerationStructureError::BlasIndexCountProvidedMismatch(
+                                    blas.error_ident(),
+                                ),
+                            )
+                        }
+                        (Some(create), Some(build)) if create < build => {
+                            return Err(
+                                BuildAccelerationStructureError::IncompatibleBlasIndexCount(
+                                    blas.error_ident(),
+                                    create,
+                                    build,
+                                ),
+                            )
+                        }
+                        _ => {}
+                    }
+                    if size_desc.index_format != spheres.size.index_format {
+                        return Err(BuildAccelerationStructureError::DifferentBlasIndexFormats(
+                            blas.error_ident(),
+                            size_desc.index_format,
+                            spheres.size.index_format,
+                        ));
+                    }
+                    let vertex_format = spheres.size.vertex_format;
+                    if spheres.vertex_stride
+                        < vertex_format.min_acceleration_structure_vertex_stride()
+                    {
+                        return Err(BuildAccelerationStructureError::VertexStrideTooSmall(
+                            blas.error_ident(),
+                            vertex_format.min_acceleration_structure_vertex_stride(),
+                            spheres.vertex_stride,
+                        ));
+                    }
+                    if spheres.vertex_stride
+                        % vertex_format.acceleration_structure_stride_alignment()
+                        != 0
+                    {
+                        return Err(BuildAccelerationStructureError::VertexStrideUnaligned(
+                            blas.error_ident(),
+                            vertex_format.acceleration_structure_stride_alignment(),
+                            spheres.vertex_stride,
+                        ));
+                    }
+                    if spheres.radius_stride < 4 || spheres.radius_stride % 4 != 0 {
+                        return Err(BuildAccelerationStructureError::InvalidRadiusStride(
+                            blas.error_ident(),
+                            spheres.radius_stride,
+                        ));
+                    }
+
+                    let first = u64::from(spheres.first_vertex);
+                    let count = u64::from(spheres.size.vertex_count);
+                    let vertex_raw = blas_input(
+                        &spheres.vertex_buffer,
+                        first * spheres.vertex_stride,
+                        count * spheres.vertex_stride,
+                        input_barriers,
+                        state,
+                    )?;
+                    let radius_raw = blas_input(
+                        &spheres.radius_buffer,
+                        first * spheres.radius_stride,
+                        count * spheres.radius_stride,
+                        input_barriers,
+                        state,
+                    )?;
+                    let indices = match (spheres.size.index_count, spheres.index_buffer.as_ref()) {
+                        (None, None) => None,
+                        (Some(_), None) => {
+                            return Err(BuildAccelerationStructureError::MissingIndexBuffer(
+                                blas.error_ident(),
+                            ))
+                        }
+                        (None, Some(index_buffer)) => {
+                            return Err(BuildAccelerationStructureError::MissingAssociatedData(
+                                index_buffer.error_ident(),
+                            ))
+                        }
+                        (Some(index_count), Some(index_buffer)) => {
+                            let Some(first_index) = spheres.first_index else {
+                                return Err(
+                                    BuildAccelerationStructureError::MissingAssociatedData(
+                                        index_buffer.error_ident(),
+                                    ),
+                                );
+                            };
+                            let format = spheres.size.index_format.unwrap();
+                            let index_stride = format.byte_size();
+                            // `hal::AccelerationStructureTriangleIndices`
+                            // accepts only `u32` offsets.
+                            let Some(offset) = first_index.checked_mul(index_stride) else {
+                                return Err(BuildAccelerationStructureError::OffsetLimitedTo4GB {
+                                    buffer_ident: index_buffer.error_ident(),
+                                    offset: u64::from(first_index)
+                                        .saturating_mul(u64::from(index_stride)),
+                                    count: u64::from(first_index),
+                                    stride: u64::from(index_stride),
+                                });
+                            };
+                            let index_raw = blas_input(
+                                index_buffer,
+                                u64::from(offset),
+                                u64::from(index_count) * u64::from(index_stride),
+                                input_barriers,
+                                state,
+                            )?;
+                            Some(hal::AccelerationStructureTriangleIndices {
+                                format,
+                                buffer: Some(index_raw),
+                                offset,
+                                count: index_count,
+                            })
+                        }
+                    };
+
+                    sphere_entries.push(hal::AccelerationStructureSpheres {
+                        vertex_buffer: Some(vertex_raw),
+                        vertex_format,
+                        first_vertex: spheres.first_vertex,
+                        vertex_count: spheres.size.vertex_count,
+                        vertex_stride: spheres.vertex_stride,
+                        radius_buffer: Some(radius_raw),
+                        radius_stride: spheres.radius_stride,
+                        indices,
+                        linear_swept: spheres.size.linear_swept,
+                        flags: spheres.size.flags,
+                    });
+                }
+
+                let scratch_buffer_offset = *scratch_buffer_blas_size;
+                *scratch_buffer_blas_size = scratch_buffer_blas_size.saturating_add(align_to(
+                    blas.size_info.build_scratch_size,
+                    u64::from(state.device.alignments.ray_tracing_scratch_buffer_alignment),
+                ));
+                blas_storage.push(BlasStore {
+                    blas: blas.clone(),
+                    entries: hal::AccelerationStructureEntries::Spheres(sphere_entries),
+                    scratch_buffer_offset,
+                });
+            }
         }
     }
     Ok(())
+}
+
+/// Uses `size` bytes of `buffer` from `offset` on as the input of a bottom
+/// level structure's build, and gives its raw buffer.
+fn blas_input<'snatch_guard: 'buffers, 'buffers>(
+    buffer: &'buffers Arc<Buffer>,
+    offset: wgt::BufferAddress,
+    size: wgt::BufferAddress,
+    input_barriers: &mut Vec<hal::BufferBarrier<'buffers, dyn hal::DynBuffer>>,
+    state: &mut EncodingState<'snatch_guard, '_>,
+) -> Result<&'buffers dyn hal::DynBuffer, BuildAccelerationStructureError> {
+    let pending = state.tracker.buffers.set_single(
+        buffer,
+        BufferUses::BOTTOM_LEVEL_ACCELERATION_STRUCTURE_INPUT,
+    );
+    let raw = buffer.try_raw(state.snatch_guard)?;
+    buffer.check_usage(BufferUsages::BLAS_INPUT)?;
+    if let Some(barrier) = pending.map(|pending| pending.into_hal(buffer, state.snatch_guard)) {
+        input_barriers.push(barrier);
+    }
+    if offset.checked_add(size).is_none_or(|end| buffer.size < end) {
+        return Err(BuildAccelerationStructureError::InsufficientBufferSize {
+            buffer_ident: buffer.error_ident(),
+            offset,
+            region_size: size,
+            buffer_size: buffer.size,
+        });
+    }
+    state
+        .buffer_memory_init_actions
+        .extend(buffer.initialization_status.read().create_action(
+            buffer,
+            offset..offset + size,
+            MemoryInitKind::NeedsInitializedMemory,
+        ));
+    Ok(raw)
 }
 
 fn map_blas<'a>(

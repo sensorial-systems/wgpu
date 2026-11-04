@@ -1458,6 +1458,13 @@ impl Player {
                         .collect(),
                 )
             }
+            wgc::ray_tracing::OwnedBlasGeometries::SphereGeometries(geos) => {
+                wgc::ray_tracing::OwnedBlasGeometries::SphereGeometries(
+                    geos.into_iter()
+                        .map(|geo| geo.map(|buffer| self.resolve_buffer_id(buffer)))
+                        .collect(),
+                )
+            }
         }
     }
 

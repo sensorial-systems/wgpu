@@ -22,9 +22,10 @@ use wgt::WasmNotSendSync;
 
 use crate::{
     AccelerationStructureAABBs, AccelerationStructureEntries, AccelerationStructureInstances,
-    AccelerationStructureOpacityMicromap, AccelerationStructureTriangleIndices,
-    AccelerationStructureTriangleTransform, AccelerationStructureTriangles, BufferBinding,
-    ExternalTextureBinding, ProgrammableStage, TextureBinding,
+    AccelerationStructureOpacityMicromap, AccelerationStructureSpheres,
+    AccelerationStructureTriangleIndices, AccelerationStructureTriangleTransform,
+    AccelerationStructureTriangles, BufferBinding, ExternalTextureBinding, ProgrammableStage,
+    TextureBinding,
 };
 
 /// Base trait for all resources, allows downcasting via [`Any`].
@@ -220,6 +221,32 @@ impl<'a> AccelerationStructureEntries<'a, dyn DynBuffer> {
                     })
                     .collect(),
             ),
+            AccelerationStructureEntries::Spheres(entries) => {
+                AccelerationStructureEntries::Spheres(
+                    entries
+                        .iter()
+                        .map(|e| AccelerationStructureSpheres {
+                            vertex_buffer: e.vertex_buffer.map(|b| b.expect_downcast_ref()),
+                            vertex_format: e.vertex_format,
+                            first_vertex: e.first_vertex,
+                            vertex_count: e.vertex_count,
+                            vertex_stride: e.vertex_stride,
+                            radius_buffer: e.radius_buffer.map(|b| b.expect_downcast_ref()),
+                            radius_stride: e.radius_stride,
+                            indices: e.indices.as_ref().map(|i| {
+                                AccelerationStructureTriangleIndices {
+                                    format: i.format,
+                                    buffer: i.buffer.map(|b| b.expect_downcast_ref()),
+                                    offset: i.offset,
+                                    count: i.count,
+                                }
+                            }),
+                            linear_swept: e.linear_swept,
+                            flags: e.flags,
+                        })
+                        .collect(),
+                )
+            }
         }
     }
 }

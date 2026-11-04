@@ -230,6 +230,13 @@ enum BuiltIn {
     IncomingRayFlags,
     HitTriangleVertexPositions,
     CurrentRayTime,
+    HitIsSphere,
+    HitIsLss,
+    HitSpherePosition,
+    HitSphereRadius,
+    HitLssPositions,
+    HitLssRadii,
+    HitLssValue,
 }
 
 impl BuiltIn {
@@ -290,6 +297,13 @@ impl BuiltIn {
             Self::IncomingRayFlags => naga::BuiltIn::IncomingRayFlags,
             Self::HitTriangleVertexPositions => naga::BuiltIn::HitTriangleVertexPositions,
             Self::CurrentRayTime => naga::BuiltIn::CurrentRayTime,
+            Self::HitIsSphere => naga::BuiltIn::HitIsSphere,
+            Self::HitIsLss => naga::BuiltIn::HitIsLss,
+            Self::HitSpherePosition => naga::BuiltIn::HitSpherePosition,
+            Self::HitSphereRadius => naga::BuiltIn::HitSphereRadius,
+            Self::HitLssPositions => naga::BuiltIn::HitLssPositions,
+            Self::HitLssRadii => naga::BuiltIn::HitLssRadii,
+            Self::HitLssValue => naga::BuiltIn::HitLssValue,
         }
     }
 }
@@ -1385,6 +1399,20 @@ impl Interface {
                 list.push(Varying::BuiltIn(BuiltIn::ClipDistances { array_size }));
                 return;
             }
+            // Arrays a hit stage reads of what it hit, which no other stage's
+            // interface is matched against.
+            naga::TypeInner::Array { .. }
+                if matches!(
+                    binding,
+                    Some(naga::Binding::BuiltIn(
+                        naga::BuiltIn::HitTriangleVertexPositions
+                            | naga::BuiltIn::HitLssPositions
+                            | naga::BuiltIn::HitLssRadii
+                    )),
+                ) =>
+            {
+                return;
+            }
             ref other => {
                 log::error!("Unexpected varying type: {other:?}");
                 return;
@@ -1461,6 +1489,13 @@ impl Interface {
                 naga::BuiltIn::IncomingRayFlags => BuiltIn::IncomingRayFlags,
                 naga::BuiltIn::HitTriangleVertexPositions => BuiltIn::HitTriangleVertexPositions,
                 naga::BuiltIn::CurrentRayTime => BuiltIn::CurrentRayTime,
+                naga::BuiltIn::HitIsSphere => BuiltIn::HitIsSphere,
+                naga::BuiltIn::HitIsLss => BuiltIn::HitIsLss,
+                naga::BuiltIn::HitSpherePosition => BuiltIn::HitSpherePosition,
+                naga::BuiltIn::HitSphereRadius => BuiltIn::HitSphereRadius,
+                naga::BuiltIn::HitLssPositions => BuiltIn::HitLssPositions,
+                naga::BuiltIn::HitLssRadii => BuiltIn::HitLssRadii,
+                naga::BuiltIn::HitLssValue => BuiltIn::HitLssValue,
             }),
             None => {
                 log::error!("Missing binding for a varying");

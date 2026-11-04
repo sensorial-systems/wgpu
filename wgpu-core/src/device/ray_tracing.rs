@@ -108,7 +108,8 @@ impl Device {
                 .filter(|desc| !desc.opacity_micromap.is_empty())
                 .map(|desc| &desc.opacity_micromap[..])
                 .collect(),
-            wgt::BlasGeometrySizeDescriptors::AABBs { .. } => Vec::new(),
+            wgt::BlasGeometrySizeDescriptors::AABBs { .. }
+            | wgt::BlasGeometrySizeDescriptors::Spheres { .. } => Vec::new(),
         };
         if !opacity_micromaps.is_empty() {
             self.require_features(Features::EXPERIMENTAL_RAY_TRACING_OPACITY_MICROMAP)?;
@@ -242,6 +243,74 @@ impl Device {
                     self.raw().get_acceleration_structure_build_sizes(
                         &hal::GetAccelerationStructureBuildSizesDescriptor {
                             entries: &hal::AccelerationStructureEntries::AABBs(entries),
+                            flags: blas_desc.flags,
+                        },
+                    )
+                }
+            }
+            wgt::BlasGeometrySizeDescriptors::Spheres { descriptors } => {
+                self.require_features(Features::EXPERIMENTAL_RAY_TRACING_LINEAR_SWEPT_SPHERES)?;
+                if moves {
+                    return Err(CreateBlasError::MovingSpheres);
+                }
+                if descriptors.len() as u32 > self.limits.max_blas_geometry_count {
+                    return Err(CreateBlasError::TooManyGeometries(
+                        self.limits.max_blas_geometry_count,
+                        descriptors.len() as u32,
+                    ));
+                }
+
+                let mut entries =
+                    Vec::<hal::AccelerationStructureSpheres<dyn hal::DynBuffer>>::with_capacity(
+                        descriptors.len(),
+                    );
+                for desc in descriptors {
+                    if desc.index_count.is_some() != desc.index_format.is_some() {
+                        return Err(CreateBlasError::MissingIndexData);
+                    }
+                    if desc.vertex_format != wgt::VertexFormat::Float32x3 {
+                        return Err(CreateBlasError::InvalidVertexFormat(
+                            desc.vertex_format,
+                            alloc::vec![wgt::VertexFormat::Float32x3],
+                        ));
+                    }
+                    if desc.index_count.is_none()
+                        && desc.linear_swept.is_some_and(|swept| {
+                            swept.indexing == wgt::LinearSweptSphereIndexing::Successive
+                        })
+                    {
+                        return Err(CreateBlasError::SuccessiveSpheresWithoutIndices);
+                    }
+                    if desc.primitive_count() > self.limits.max_blas_primitive_count {
+                        return Err(CreateBlasError::TooManyPrimitives(
+                            self.limits.max_blas_primitive_count,
+                            desc.primitive_count(),
+                        ));
+                    }
+                    entries.push(hal::AccelerationStructureSpheres::<dyn hal::DynBuffer> {
+                        vertex_buffer: Some(self.zero_buffer.as_ref()),
+                        vertex_format: desc.vertex_format,
+                        first_vertex: 0,
+                        vertex_count: desc.vertex_count,
+                        vertex_stride: 0,
+                        radius_buffer: Some(self.zero_buffer.as_ref()),
+                        radius_stride: 0,
+                        indices: desc.index_count.map(|count| {
+                            AccelerationStructureTriangleIndices::<dyn hal::DynBuffer> {
+                                format: desc.index_format.unwrap(),
+                                buffer: Some(self.zero_buffer.as_ref()),
+                                offset: 0,
+                                count,
+                            }
+                        }),
+                        linear_swept: desc.linear_swept,
+                        flags: desc.flags,
+                    });
+                }
+                unsafe {
+                    self.raw().get_acceleration_structure_build_sizes(
+                        &hal::GetAccelerationStructureBuildSizesDescriptor {
+                            entries: &hal::AccelerationStructureEntries::Spheres(entries),
                             flags: blas_desc.flags,
                         },
                     )
