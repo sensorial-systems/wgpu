@@ -419,11 +419,15 @@ impl Device {
             compiler.compile(&desc.ray_generation, stage)?
         };
 
-        let miss = {
-            let stage = validation::ShaderStageForValidation::Miss;
+        if desc.misses.is_empty() {
+            return Err(ray_tracing_pipeline::RayTracingPipelineError::NoMissStage.into());
+        }
 
-            compiler.compile(&desc.miss, stage)?
-        };
+        let misses = desc
+            .misses
+            .iter()
+            .map(|miss| compiler.compile(miss, validation::ShaderStageForValidation::Miss))
+            .collect::<Result<Vec<_>, _>>()?;
 
         if desc.intersections.len() > 1 << 24 {
             return Err(
@@ -505,11 +509,12 @@ impl Device {
         };
 
         let raw = {
+            let misses: Vec<_> = misses.iter().map(|miss| miss.to_hal()).collect();
             let pipeline_desc = hal::RayTracingPipelineDescriptor {
                 label: desc.label.to_hal(self.instance_flags),
                 layout: pipeline_layout.raw()?,
                 ray_generation: ray_generation.to_hal(),
-                miss: miss.to_hal(),
+                misses: &misses,
                 intersection: &intersections,
                 max_recursion_depth: desc.max_recursion_depth,
                 cache: cache.as_ref().map(|it| it.raw()).transpose()?,
@@ -536,7 +541,7 @@ impl Device {
         let (shader_modules, intersection_types) = {
             let mut shader_modules = Vec::new();
             shader_modules.push(desc.ray_generation.module.clone());
-            shader_modules.push(desc.miss.module.clone());
+            shader_modules.extend(desc.misses.iter().map(|miss| miss.module.clone()));
             shader_modules.reserve(desc.intersections.len());
             let mut intersection_types = Vec::with_capacity(desc.intersections.len());
             for intersection in &desc.intersections {
@@ -565,6 +570,7 @@ impl Device {
         let shader_binding_data = match ray_tracing_pipeline::ShaderBindingData::from_raw_pipeline(
             self.clone(),
             raw.as_ref(),
+            desc.misses.len(),
             desc.intersections.len(),
         ) {
             Ok(sbd) => sbd,

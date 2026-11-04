@@ -301,7 +301,10 @@ impl crate::CommandEncoder for CommandBuffer {
     ) {
     }
 
-    unsafe fn begin_ray_tracing_pass(&mut self, _desc: &crate::RayTracingPassDescriptor) {}
+    unsafe fn begin_ray_tracing_pass(
+        &mut self,
+        _desc: &crate::RayTracingPassDescriptor<Resource>,
+    ) {}
 
     unsafe fn end_ray_tracing_pass(&mut self) {}
 
@@ -317,6 +320,16 @@ impl crate::CommandEncoder for CommandBuffer {
         _ray_generation_group_data: crate::PipelineGroupData<Buffer>,
         _miss_group_data: crate::PipelineGroupData<Buffer>,
         _intersection_group_data: crate::PipelineGroupData<Buffer>,
+    ) {
+    }
+
+    unsafe fn trace_rays_indirect(
+        &mut self,
+        _ray_generation_group_data: crate::PipelineGroupData<Buffer>,
+        _miss_group_data: crate::PipelineGroupData<Buffer>,
+        _intersection_group_data: crate::PipelineGroupData<Buffer>,
+        _buffer: &Buffer,
+        _offset: wgt::BufferAddress,
     ) {
     }
 }

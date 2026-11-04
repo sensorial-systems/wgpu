@@ -150,6 +150,7 @@ pub enum Command<R: ReferenceType> {
     },
     RunRayTracingPass {
         pass: crate::command::BasePass<crate::command::RayTracingCommand<R>, Infallible>,
+        timestamp_writes: Option<crate::command::PassTimestampWrites<R::QuerySet>>,
     },
     RunRenderPass {
         pass: crate::command::BasePass<crate::command::RenderCommand<R>, Infallible>,

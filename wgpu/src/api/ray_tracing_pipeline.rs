@@ -102,8 +102,10 @@ pub struct RayTracingPipelineDescriptor<'a> {
     pub layout: Option<&'a PipelineLayout>,
     /// The ray generation stage. The shader stage invoked by command encoder trace rays.
     pub ray_generation: RayTracingStage<'a>,
-    /// The miss stage. Called if a ray does not hit any object.
-    pub miss: RayTracingStage<'a>,
+    /// The miss stages, at least one. A ray that hits nothing calls the
+    /// one its trace's miss index names: the first, unless `traceRay` is
+    /// given another.
+    pub misses: &'a [RayTracingStage<'a>],
     /// The list of intersection descriptors
     pub intersections: &'a [RayTracingIntersectionDescriptor<'a>],
     /// The maximum depth of entry points able to be recursed into, discounting the ray generation stage.

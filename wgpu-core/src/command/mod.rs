@@ -1214,12 +1214,19 @@ impl CommandEncoder {
                             destination_offset,
                         )?;
                     }
-                    ArcCommand::RunRayTracingPass { pass } => {
+                    ArcCommand::RunRayTracingPass {
+                        pass,
+                        timestamp_writes,
+                    } => {
                         api_log!(
                             "Begin encoding ray tracing pass with '{}' label",
                             pass.label.as_deref().unwrap_or("")
                         );
-                        let res = ray_tracing_pass::encode_ray_tracing_pass(&mut state, pass);
+                        let res = ray_tracing_pass::encode_ray_tracing_pass(
+                            &mut state,
+                            pass,
+                            timestamp_writes,
+                        );
                         match res.as_ref() {
                             Err(err) => {
                                 api_log!("Finished encoding ray tracing pass ({err:?})")
@@ -2096,6 +2103,8 @@ pub enum PassErrorScope {
     InsertDebugMarker,
     #[error("In a trace rays command")]
     TraceRays,
+    #[error("In a trace rays indirect command")]
+    TraceRaysIndirect,
 }
 
 /// Variant of `EncoderStateError` that includes the pass scope.

@@ -478,11 +478,17 @@ impl<D: Device + DynResource> DynDevice for D {
             })
             .collect();
 
+        let misses: Vec<_> = desc
+            .misses
+            .iter()
+            .map(|stage| stage.clone().expect_downcast())
+            .collect();
+
         let desc = RayTracingPipelineDescriptor {
             label: desc.label,
             layout: desc.layout.expect_downcast_ref(),
             ray_generation: desc.ray_generation.clone().expect_downcast(),
-            miss: desc.miss.clone().expect_downcast(),
+            misses: &misses,
             intersection: &ray_intersection,
             max_recursion_depth: desc.max_recursion_depth,
             cache: desc.cache.as_ref().map(|c| c.expect_downcast_ref()),

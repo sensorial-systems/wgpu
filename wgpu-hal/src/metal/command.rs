@@ -1925,7 +1925,10 @@ impl crate::CommandEncoder for super::CommandEncoder {
         residency_set.commit();
     }
 
-    unsafe fn begin_ray_tracing_pass(&mut self, _desc: &crate::RayTracingPassDescriptor) {
+    unsafe fn begin_ray_tracing_pass(
+        &mut self,
+        _desc: &crate::RayTracingPassDescriptor<super::QuerySet>,
+    ) {
         unreachable!("Ray tracing pipelines not supported")
     }
 
@@ -1946,6 +1949,17 @@ impl crate::CommandEncoder for super::CommandEncoder {
         _ray_generation_group_data: crate::PipelineGroupData<super::Buffer>,
         _miss_group_data: crate::PipelineGroupData<super::Buffer>,
         _intersection_group_data: crate::PipelineGroupData<super::Buffer>,
+    ) {
+        unreachable!("Ray tracing pipelines not supported")
+    }
+
+    unsafe fn trace_rays_indirect(
+        &mut self,
+        _ray_generation_group_data: crate::PipelineGroupData<super::Buffer>,
+        _miss_group_data: crate::PipelineGroupData<super::Buffer>,
+        _intersection_group_data: crate::PipelineGroupData<super::Buffer>,
+        _buffer: &super::Buffer,
+        _offset: wgt::BufferAddress,
     ) {
         unreachable!("Ray tracing pipelines not supported")
     }

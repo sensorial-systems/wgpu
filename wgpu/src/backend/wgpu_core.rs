@@ -1479,7 +1479,7 @@ impl dispatch::DeviceInterface for CoreDevice {
                 .layout
                 .map(|pll| pll.inner.as_core().wgpu_pipeline_layout.clone()),
             ray_generation: downcast_rt_stage(&desc.ray_generation),
-            miss: downcast_rt_stage(&desc.miss),
+            misses: desc.misses.iter().map(downcast_rt_stage).collect(),
             intersections: desc
                 .intersections
                 .iter()
@@ -2255,9 +2255,19 @@ impl dispatch::CommandEncoderInterface for CoreCommandEncoder {
         &self,
         desc: &crate::RayTracingPassDescriptor<'_>,
     ) -> dispatch::DispatchRayTracingPass {
+        let timestamp_writes =
+            desc.timestamp_writes
+                .as_ref()
+                .map(|tw| wgc::command::PassTimestampWrites {
+                    query_set: tw.query_set.inner.as_core().wgpu_query_set.clone(),
+                    beginning_of_pass_write_index: tw.beginning_of_pass_write_index,
+                    end_of_pass_write_index: tw.end_of_pass_write_index,
+                });
+
         let pass = self.wgpu_command_encoder.begin_ray_tracing_pass(
             &wgc::command::RayTracingPassDescriptor {
                 label: desc.label.map(Borrowed),
+                timestamp_writes,
             },
         );
 
@@ -2880,6 +2890,17 @@ impl dispatch::RayTracingPassInterface for CoreRayTracingPass {
 
     fn trace_rays(&mut self, x: u32, y: u32, z: u32) {
         self.pass.trace_rays(x, y, z)
+    }
+
+    fn trace_rays_indirect(
+        &mut self,
+        indirect_buffer: &dispatch::DispatchBuffer,
+        indirect_offset: crate::BufferAddress,
+    ) {
+        let indirect_buffer = indirect_buffer.as_core();
+
+        self.pass
+            .trace_rays_indirect(indirect_buffer.wgpu_buffer.clone(), indirect_offset);
     }
 }
 

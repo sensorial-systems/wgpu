@@ -767,12 +767,16 @@ impl Player {
                     .ray_generation
                     .zero_initialize_workgroup_memory,
             },
-            miss: wgc::pipeline::ProgrammableStageDescriptor {
-                module: self.resolve_shader_module_id(desc.miss.module),
-                entry_point: desc.miss.entry_point,
-                constants: desc.miss.constants,
-                zero_initialize_workgroup_memory: desc.miss.zero_initialize_workgroup_memory,
-            },
+            misses: desc
+                .misses
+                .into_iter()
+                .map(|miss| wgc::pipeline::ProgrammableStageDescriptor {
+                    module: self.resolve_shader_module_id(miss.module),
+                    entry_point: miss.entry_point,
+                    constants: miss.constants,
+                    zero_initialize_workgroup_memory: miss.zero_initialize_workgroup_memory,
+                })
+                .collect(),
             intersections: desc
                 .intersections
                 .into_iter()
@@ -994,8 +998,12 @@ impl Player {
                 occlusion_query_set: occlusion_query_set.map(|qs| self.resolve_query_set_id(qs)),
                 multiview_mask,
             },
-            Command::RunRayTracingPass { pass } => Command::RunRayTracingPass {
+            Command::RunRayTracingPass {
+                pass,
+                timestamp_writes,
+            } => Command::RunRayTracingPass {
                 pass: self.resolve_ray_tracing_pass(pass),
+                timestamp_writes: timestamp_writes.map(|tw| self.resolve_pass_timestamp_writes(tw)),
             },
             Command::BuildAccelerationStructures { blas, tlas } => {
                 Command::BuildAccelerationStructures {
@@ -1331,6 +1339,10 @@ impl Player {
             C::SetPipeline(id) => C::SetPipeline(self.resolve_ray_tracing_pipeline_id(id)),
             C::SetImmediate { offset, data } => C::SetImmediate { offset, data },
             C::TraceRays(groups) => C::TraceRays(groups),
+            C::TraceRaysIndirect { buffer, offset } => C::TraceRaysIndirect {
+                buffer: self.resolve_buffer_id(buffer),
+                offset,
+            },
             C::PushDebugGroup { color, len } => C::PushDebugGroup { color, len },
             C::PopDebugGroup => C::PopDebugGroup,
             C::InsertDebugMarker { color, len } => C::InsertDebugMarker { color, len },

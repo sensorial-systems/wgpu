@@ -26,14 +26,16 @@ pub enum RayTracingPipelineError {
         "The ray recursion depth {0} is greater than the limit Limits::max_ray_recursion_depth {1}"
     )]
     TooHighRayRecursionDepth(u32, u32),
+    #[error("A ray tracing pipeline needs at least one miss stage")]
+    NoMissStage,
 }
 
 impl WebGpuError for RayTracingPipelineError {
     fn webgpu_error_type(&self) -> ErrorType {
         match self {
-            Self::TooManyIntersectionGroups(..) | Self::TooHighRayRecursionDepth(..) => {
-                ErrorType::Validation
-            }
+            Self::TooManyIntersectionGroups(..)
+            | Self::TooHighRayRecursionDepth(..)
+            | Self::NoMissStage => ErrorType::Validation,
         }
     }
 }
@@ -61,8 +63,9 @@ pub struct RayTracingPipelineDescriptor<
     pub layout: Option<PLL>,
     /// The ray generation stage descriptor
     pub ray_generation: ProgrammableStageDescriptor<'a, SM>,
-    /// The miss stage descriptor
-    pub miss: ProgrammableStageDescriptor<'a, SM>,
+    /// The miss stage descriptors, at least one: a trace calls the one its
+    /// miss index names.
+    pub misses: Vec<ProgrammableStageDescriptor<'a, SM>>,
     /// All the descriptors for intersection functions
     pub intersections: Vec<RayTracingIntersectionDescriptor<'a, SM>>,
     /// The maximum amount entry points are allowed to recurse
@@ -89,18 +92,25 @@ pub enum RayTracingIntersectionType {
 pub struct ShaderBindingData {
     pub(crate) raw: ManuallyDrop<Box<dyn hal::DynBuffer>>,
     pub(crate) device: Arc<Device>,
-    pub(crate) num_intersection_groups: u32,
+    pub(crate) num_misses: u32,
     pub(crate) miss_offset: wgt::BufferAddress,
     pub(crate) intersection_offset: wgt::BufferAddress,
+    /// The intersection groups' records in the table: each group's, then
+    /// as many less one empty ones, which a trace's hit group offset --
+    /// clamped below the number of groups -- can reach past the last.
+    pub(crate) intersection_records: u32,
 }
 
 impl ShaderBindingData {
-    /// Panics if `num_intersection_groups` is above u32::MAX
+    /// Panics if `num_misses` or `num_intersection_groups` is above u32::MAX
     pub(crate) fn from_raw_pipeline(
         device: Arc<Device>,
         pipeline: &dyn hal::DynRayTracingPipeline,
+        num_misses: usize,
         num_intersection_groups: usize,
     ) -> Result<Arc<Self>, CreatePipelineError> {
+        let num_misses = u32::try_from(num_misses).unwrap();
+        let num_intersection_groups = u32::try_from(num_intersection_groups).unwrap();
         let mut base_data = Vec::new();
 
         let ray_generation_data = unsafe {
@@ -121,7 +131,7 @@ impl ShaderBindingData {
         let miss_data = unsafe {
             device
                 .raw()
-                .get_raytracing_pipeline_group_data(pipeline, 1..2)
+                .get_raytracing_pipeline_group_data(pipeline, 1..(1 + num_misses))
         }
         .map_err(|e| CreatePipelineError::Device(device.handle_hal_error(e)))?;
 
@@ -133,16 +143,27 @@ impl ShaderBindingData {
 
         base_data.resize(padded_intersection_offset as _, 0);
 
+        let mut intersection_records = 0;
         if num_intersection_groups != 0 {
+            let first = 1 + num_misses;
             let intersection_data = unsafe {
                 device.raw().get_raytracing_pipeline_group_data(
                     pipeline,
-                    2..(2 + num_intersection_groups as u32),
+                    first..(first + num_intersection_groups),
                 )
             }
             .map_err(|e| CreatePipelineError::Device(device.handle_hal_error(e)))?;
 
             base_data.extend_from_slice(&intersection_data);
+
+            // Empty groups past the last: a record of zeros is a hit group of
+            // no stages, which a trace reaching it runs as one.
+            intersection_records = 2 * num_intersection_groups - 1;
+            let record = device.alignments.ray_tracing_pipeline_group_data_size as usize;
+            base_data.resize(
+                base_data.len() + (num_intersection_groups as usize - 1) * record,
+                0,
+            );
         }
 
         // Don't need the exact allocated size as it will be grater than this.
@@ -160,9 +181,10 @@ impl ShaderBindingData {
         let sbd = Arc::new(Self {
             raw: ManuallyDrop::new(buffer),
             device: device.clone(),
-            num_intersection_groups: u32::try_from(num_intersection_groups).unwrap(),
+            num_misses,
             miss_offset: padded_miss_offset,
             intersection_offset: padded_intersection_offset,
+            intersection_records,
         });
 
         // If there is no queue anymore, the ray tracing pipeline can't be accessed, so we don't have to worry about UB from uninitialized values

@@ -128,11 +128,11 @@ fn pipeline_create_use(ctx: TestingContext) {
                 entry_point: None,
                 compilation_options: Default::default(),
             },
-            miss: RayTracingStage {
+            misses: &[RayTracingStage {
                 module: &ray_miss,
                 entry_point: None,
                 compilation_options: Default::default(),
-            },
+            }],
             intersections: &[
                 RayTracingIntersectionDescriptor::Triangle {
                     closest_hit: RayTracingStage {
@@ -316,11 +316,11 @@ fn pipeline_output(ctx: TestingContext) {
                 entry_point: None,
                 compilation_options: Default::default(),
             },
-            miss: RayTracingStage {
+            misses: &[RayTracingStage {
                 module: &ray_miss,
                 entry_point: None,
                 compilation_options: Default::default(),
-            },
+            }],
             intersections: &[],
             max_recursion_depth: 1,
             cache: None,
@@ -508,11 +508,11 @@ fn pipeline_swap(ctx: TestingContext) {
                 entry_point: None,
                 compilation_options: Default::default(),
             },
-            miss: RayTracingStage {
+            misses: &[RayTracingStage {
                 module: &ray_miss,
                 entry_point: None,
                 compilation_options: Default::default(),
-            },
+            }],
             intersections: &[RayTracingIntersectionDescriptor::Triangle {
                 closest_hit: RayTracingStage {
                     module: &ray_closest,
@@ -539,11 +539,11 @@ fn pipeline_swap(ctx: TestingContext) {
                 entry_point: None,
                 compilation_options: Default::default(),
             },
-            miss: RayTracingStage {
+            misses: &[RayTracingStage {
                 module: &ray_miss,
                 entry_point: None,
                 compilation_options: Default::default(),
-            },
+            }],
             intersections: &[],
             max_recursion_depth: 1,
             cache: None,
@@ -729,11 +729,11 @@ fn mismatched_intersection_types(ctx: TestingContext) {
                 entry_point: None,
                 compilation_options: Default::default(),
             },
-            miss: RayTracingStage {
+            misses: &[RayTracingStage {
                 module: &ray_miss,
                 entry_point: None,
                 compilation_options: Default::default(),
-            },
+            }],
             intersections: &[
                 RayTracingIntersectionDescriptor::Triangle {
                     closest_hit: RayTracingStage {
@@ -865,11 +865,11 @@ fn empty_pipeline_use(ctx: TestingContext) {
                 entry_point: None,
                 compilation_options: Default::default(),
             },
-            miss: RayTracingStage {
+            misses: &[RayTracingStage {
                 module: &ray_miss,
                 entry_point: None,
                 compilation_options: Default::default(),
-            },
+            }],
             intersections: &[],
             max_recursion_depth: 1,
             cache: None,

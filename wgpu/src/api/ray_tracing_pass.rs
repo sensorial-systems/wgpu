@@ -83,6 +83,18 @@ impl RayTracingPass<'_> {
     pub fn trace_rays(&mut self, x: u32, y: u32, z: u32) {
         self.inner.trace_rays(x, y, z);
     }
+
+    /// Dispatches rays in the current ray tracing pipeline, as many as
+    /// `indirect_buffer` holds at `indirect_offset` when the trace runs:
+    /// width, height and depth, three `u32`s.
+    ///
+    /// The buffer needs [`BufferUsages::INDIRECT`] usage. Unlike
+    /// [`trace_rays`](Self::trace_rays)'s, these sizes are not checked
+    /// against the device's limits.
+    pub fn trace_rays_indirect(&mut self, indirect_buffer: &Buffer, indirect_offset: BufferAddress) {
+        self.inner
+            .trace_rays_indirect(&indirect_buffer.inner, indirect_offset);
+    }
 }
 
 /// [`Features::IMMEDIATES`] must be enabled on the device in order to call these functions.
@@ -107,6 +119,10 @@ impl RayTracingPass<'_> {
 pub struct RayTracingPassDescriptor<'a> {
     /// Debug label of the ray tracing pass. This will show up in graphics debuggers for easy identification.
     pub label: Label<'a>,
+    /// Defines which timestamp values will be written for this pass, and where to write them to.
+    ///
+    /// Requires [`Features::TIMESTAMP_QUERY`] to be enabled.
+    pub timestamp_writes: Option<ComputePassTimestampWrites<'a>>,
 }
 #[cfg(send_sync)]
 static_assertions::assert_impl_all!(RayTracingPassDescriptor<'_>: Send, Sync);

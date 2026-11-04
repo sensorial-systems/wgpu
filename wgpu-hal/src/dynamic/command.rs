@@ -191,7 +191,7 @@ pub trait DynCommandEncoder: DynResource + core::fmt::Debug {
         offset: wgt::BufferAddress,
     );
 
-    unsafe fn begin_ray_tracing_pass(&mut self, desc: &RayTracingPassDescriptor);
+    unsafe fn begin_ray_tracing_pass(&mut self, desc: &RayTracingPassDescriptor<dyn DynQuerySet>);
     unsafe fn end_ray_tracing_pass(&mut self);
 
     unsafe fn trace_rays(
@@ -200,6 +200,15 @@ pub trait DynCommandEncoder: DynResource + core::fmt::Debug {
         ray_generation_group_data: crate::PipelineGroupData<dyn DynBuffer>,
         miss_group_data: crate::PipelineGroupData<dyn DynBuffer>,
         intersection_group_data: crate::PipelineGroupData<dyn DynBuffer>,
+    );
+
+    unsafe fn trace_rays_indirect(
+        &mut self,
+        ray_generation_group_data: crate::PipelineGroupData<dyn DynBuffer>,
+        miss_group_data: crate::PipelineGroupData<dyn DynBuffer>,
+        intersection_group_data: crate::PipelineGroupData<dyn DynBuffer>,
+        buffer: &dyn DynBuffer,
+        offset: wgt::BufferAddress,
     );
 
     unsafe fn set_ray_tracing_pipeline(&mut self, pipeline: &dyn DynRayTracingPipeline);
@@ -661,8 +670,14 @@ impl<C: CommandEncoder + DynResource> DynCommandEncoder for C {
         unsafe { self.set_vertex_buffer(index, binding) };
     }
 
-    unsafe fn begin_ray_tracing_pass(&mut self, desc: &RayTracingPassDescriptor) {
-        let desc = RayTracingPassDescriptor { label: desc.label };
+    unsafe fn begin_ray_tracing_pass(&mut self, desc: &RayTracingPassDescriptor<dyn DynQuerySet>) {
+        let desc = RayTracingPassDescriptor {
+            label: desc.label,
+            timestamp_writes: desc
+                .timestamp_writes
+                .as_ref()
+                .map(|writes| writes.expect_downcast()),
+        };
         unsafe { C::begin_ray_tracing_pass(self, &desc) };
     }
 
@@ -697,6 +712,34 @@ impl<C: CommandEncoder + DynResource> DynCommandEncoder for C {
                 downcast_group_data(ray_generation_group_data),
                 downcast_group_data(miss_group_data),
                 downcast_group_data(intersection_group_data),
+            );
+        }
+    }
+
+    unsafe fn trace_rays_indirect<'a>(
+        &mut self,
+        ray_generation_group_data: crate::PipelineGroupData<'a, dyn DynBuffer>,
+        miss_group_data: crate::PipelineGroupData<'a, dyn DynBuffer>,
+        intersection_group_data: crate::PipelineGroupData<'a, dyn DynBuffer>,
+        buffer: &'a dyn DynBuffer,
+        offset: wgt::BufferAddress,
+    ) {
+        let downcast_group_data =
+            |data: crate::PipelineGroupData<'a, dyn DynBuffer>| crate::PipelineGroupData {
+                buffer: data.buffer.expect_downcast_ref(),
+                offset: data.offset,
+                stride: data.stride,
+                count: data.count,
+            };
+
+        unsafe {
+            C::trace_rays_indirect(
+                self,
+                downcast_group_data(ray_generation_group_data),
+                downcast_group_data(miss_group_data),
+                downcast_group_data(intersection_group_data),
+                buffer.expect_downcast_ref(),
+                offset,
             );
         }
     }

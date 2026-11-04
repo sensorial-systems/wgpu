@@ -1408,14 +1408,30 @@ impl crate::CommandEncoder for super::CommandEncoder {
 
     // ray tracing
 
-    unsafe fn begin_ray_tracing_pass(&mut self, desc: &crate::RayTracingPassDescriptor<'_>) {
+    unsafe fn begin_ray_tracing_pass(
+        &mut self,
+        desc: &crate::RayTracingPassDescriptor<'_, super::QuerySet>,
+    ) {
         self.bind_point = vk::PipelineBindPoint::RAY_TRACING_KHR;
         if let Some(label) = desc.label {
             unsafe { self.begin_debug_marker(label) };
             self.rpass_debug_marker_active = true;
         }
+
+        if let Some(timestamp_writes) = desc.timestamp_writes.as_ref() {
+            if let Some(index) = timestamp_writes.beginning_of_pass_write_index {
+                unsafe {
+                    self.write_timestamp(timestamp_writes.query_set, index);
+                }
+            }
+            self.end_of_pass_timer_query = timestamp_writes
+                .end_of_pass_write_index
+                .map(|index| (timestamp_writes.query_set.raw, index));
+        }
     }
     unsafe fn end_ray_tracing_pass(&mut self) {
+        self.write_pass_end_timestamp_if_requested();
+
         if self.rpass_debug_marker_active {
             unsafe { self.end_debug_marker() };
             self.rpass_debug_marker_active = false
@@ -1480,6 +1496,60 @@ impl crate::CommandEncoder for super::CommandEncoder {
                 count[0],
                 count[1],
                 count[2],
+            )
+        };
+    }
+
+    unsafe fn trace_rays_indirect(
+        &mut self,
+        ray_generation_group_data: crate::PipelineGroupData<super::Buffer>,
+        miss_group_data: crate::PipelineGroupData<super::Buffer>,
+        intersection_group_data: crate::PipelineGroupData<super::Buffer>,
+        buffer: &super::Buffer,
+        offset: wgt::BufferAddress,
+    ) {
+        let ray_tracing_functions = self
+            .device
+            .extension_fns
+            .ray_tracing
+            .as_ref()
+            .expect("Feature `EXPERIMENTAL_RAY_TRACING` not enabled");
+
+        let ray_tracing_pipeline_functions = self
+            .device
+            .extension_fns
+            .ray_tracing_pipelines
+            .as_ref()
+            .expect("Feature `EXPERIMENTAL_RAY_TRACING_PIPELINES` not enabled");
+
+        let get_device_address = |buffer: &super::Buffer| unsafe {
+            ray_tracing_functions
+                .buffer_device_address
+                .get_buffer_device_address(
+                    &vk::BufferDeviceAddressInfo::default().buffer(buffer.raw),
+                )
+        };
+
+        let region = |data: &crate::PipelineGroupData<super::Buffer>| {
+            vk::StridedDeviceAddressRegionKHR {
+                device_address: get_device_address(data.buffer) + data.offset,
+                stride: data.stride,
+                size: data.stride * data.count,
+            }
+        };
+
+        unsafe {
+            ray_tracing_pipeline_functions.cmd_trace_rays_indirect(
+                self.raw_handle(),
+                // Vulkan requires the ray generation region to be one group.
+                &vk::StridedDeviceAddressRegionKHR {
+                    size: ray_generation_group_data.stride,
+                    ..region(&ray_generation_group_data)
+                },
+                &region(&miss_group_data),
+                &region(&intersection_group_data),
+                &vk::StridedDeviceAddressRegionKHR::default(),
+                get_device_address(buffer) + offset,
             )
         };
     }

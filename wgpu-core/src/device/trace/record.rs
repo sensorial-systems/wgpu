@@ -274,8 +274,12 @@ impl IntoTrace for ArcCommand {
                 occlusion_query_set: occlusion_query_set.map(|q| q.to_trace()),
                 multiview_mask,
             },
-            ArcCommand::RunRayTracingPass { pass } => Command::RunRayTracingPass {
+            ArcCommand::RunRayTracingPass {
+                pass,
+                timestamp_writes,
+            } => Command::RunRayTracingPass {
                 pass: pass.into_trace(),
+                timestamp_writes: timestamp_writes.map(|tw| tw.into_trace()),
             },
             ArcCommand::BuildAccelerationStructures { blas, tlas } => {
                 Command::BuildAccelerationStructures {
@@ -676,6 +680,10 @@ impl IntoTrace for ArcRayTracingCommand {
             C::SetPipeline(id) => C::SetPipeline(id.into_trace()),
             C::SetImmediate { offset, data } => C::SetImmediate { offset, data },
             C::TraceRays(groups) => C::TraceRays(groups),
+            C::TraceRaysIndirect { buffer, offset } => C::TraceRaysIndirect {
+                buffer: buffer.to_trace(),
+                offset,
+            },
             C::PushDebugGroup { color, len } => C::PushDebugGroup { color, len },
             C::PopDebugGroup => C::PopDebugGroup,
             C::InsertDebugMarker { color, len } => C::InsertDebugMarker { color, len },
@@ -810,7 +818,7 @@ impl<'a> IntoTrace for crate::ray_tracing_pipeline::RayTracingPipelineDescriptor
             label: self.label,
             layout: self.layout.into_trace(),
             ray_generation: self.ray_generation.into_trace(),
-            miss: self.miss.into_trace(),
+            misses: self.misses.into_iter().map(|m| m.into_trace()).collect(),
             intersections: self
                 .intersections
                 .into_iter()
@@ -1216,7 +1224,7 @@ fn action_to_owned(action: Action<'_, PointerReferences>) -> Action<'static, Poi
                 label: owned_label(&desc.label),
                 layout: desc.layout,
                 ray_generation: owned_stage(desc.ray_generation),
-                miss: owned_stage(desc.miss),
+                misses: desc.misses.into_iter().map(owned_stage).collect(),
                 intersections: desc
                     .intersections
                     .into_iter()

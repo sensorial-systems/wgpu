@@ -16,18 +16,21 @@ use crate::{
         memory_init::{fixup_discarded_surfaces, SurfacesInDiscardState},
         pass::{self, flush_bindings_helper, ImmediateState},
         pass_base, pass_try,
+        query::record_pass_timestamp_writes,
         ray_tracing_pass_commands::ArcRayTracingCommand,
         ArcCommand, BasePass, BindGroupStateChange, CommandEncoder, CommandEncoderError,
         DebugGroupError, EncoderStateError, EncodingState, InnerCommandEncoder, MapPassErr,
-        PassErrorScope, PassStateError, StateChange,
+        PassErrorScope, PassStateError, PassTimestampWrites, QueryUseError, StateChange,
+        TimestampWritesError,
     },
     device::{Device, DeviceError, MissingDownlevelFlags, MissingFeatures},
     hal_label, id, impl_resource_type,
+    init_tracker::MemoryInitKind,
     ray_tracing::AsAction,
     ray_tracing_pipeline::RayTracingPipeline,
     resource::{
-        DestroyedResourceError, InvalidOrDestroyedResourceError, InvalidResourceError, Labeled,
-        MissingBufferUsageError, ParentDevice,
+        Buffer, DestroyedResourceError, InvalidOrDestroyedResourceError, InvalidResourceError,
+        Labeled, MissingBufferUsageError, ParentDevice, QuerySet, RawResourceAccess, Trackable,
     },
     track::{ResourceUsageCompatibilityError, Tracker},
     Label,
@@ -46,6 +49,8 @@ pub struct RayTracingPass {
     parent: Option<Arc<CommandEncoder>>,
 
     device: Arc<Device>,
+
+    timestamp_writes: Option<PassTimestampWrites>,
 
     current_bind_groups: BindGroupStateChange,
     current_pipeline: StateChange<Arc<RayTracingPipeline>>,
@@ -78,12 +83,16 @@ impl RayTracingPass {
             .device
             .require_features(wgt::Features::EXPERIMENTAL_RAY_TRACING_PIPELINES)?;
 
-        let RayTracingPassDescriptor { label } = desc;
+        let RayTracingPassDescriptor {
+            label,
+            timestamp_writes,
+        } = desc;
 
         Ok(Self {
             base: BasePass::new(&label),
             device: parent.device.clone(),
             parent: Some(parent),
+            timestamp_writes,
 
             current_bind_groups: BindGroupStateChange::new(),
             current_pipeline: StateChange::new(),
@@ -95,6 +104,7 @@ impl RayTracingPass {
             base: BasePass::new_invalid(label, err),
             device: parent.device.clone(),
             parent: Some(parent),
+            timestamp_writes: None,
             current_bind_groups: BindGroupStateChange::new(),
             current_pipeline: StateChange::new(),
         }
@@ -184,8 +194,10 @@ impl RayTracingPass {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct RayTracingPassDescriptor<'a> {
+pub struct RayTracingPassDescriptor<'a, PTW = PassTimestampWrites> {
     pub label: Label<'a>,
+    /// Defines where and when timestamp values will be written for this pass.
+    pub timestamp_writes: Option<PTW>,
 }
 
 #[derive(Clone, Debug, Error)]
@@ -260,6 +272,10 @@ pub enum RayTracingPassErrorInner {
     PassEnded,
     #[error(transparent)]
     InvalidResource(#[from] InvalidResourceError),
+    #[error(transparent)]
+    QueryUse(#[from] QueryUseError),
+    #[error(transparent)]
+    TimestampWrites(#[from] TimestampWritesError),
 }
 
 impl From<InvalidOrDestroyedResourceError> for RayTracingPassErrorInner {
@@ -314,6 +330,8 @@ impl WebGpuError for RayTracingPassError {
             RayTracingPassErrorInner::MissingFeatures(e) => e.webgpu_error_type(),
             RayTracingPassErrorInner::MissingDownlevelFlags(e) => e.webgpu_error_type(),
             RayTracingPassErrorInner::InvalidResource(e) => e.webgpu_error_type(),
+            RayTracingPassErrorInner::QueryUse(e) => e.webgpu_error_type(),
+            RayTracingPassErrorInner::TimestampWrites(e) => e.webgpu_error_type(),
 
             RayTracingPassErrorInner::InvalidParentEncoder
             | RayTracingPassErrorInner::BindGroupIndexOutOfRange { .. }
@@ -374,9 +392,23 @@ impl<'scope, 'snatch_guard, 'cmd_enc> State<'scope, 'snatch_guard, 'cmd_enc> {
     ///
     /// This differs from a render pass, which the equivalent method
     /// on compute pass' state discuss more.
-    fn flush_bindings(&mut self) -> Result<(), RayTracingPassErrorInner> {
+    ///
+    /// An indirect trace's buffer is checked for conflicting usages and
+    /// moved into its indirect usage, as a compute pass' unvalidated
+    /// indirect dispatch's is.
+    fn flush_bindings(
+        &mut self,
+        indirect_buffer: Option<&Arc<Buffer>>,
+    ) -> Result<(), RayTracingPassErrorInner> {
         for bind_group in self.pass.binder.list_active() {
             unsafe { self.pass.scope.merge_bind_group(&bind_group.used)? };
+        }
+
+        if let Some(buffer) = indirect_buffer {
+            self.pass
+                .scope
+                .buffers
+                .merge_single(buffer, wgt::BufferUses::INDIRECT)?;
         }
         // For ray tracing passes, usage scopes are associated with each trace
         // ray (in the same way as compute passes) and not with the pass as a
@@ -396,6 +428,15 @@ impl<'scope, 'snatch_guard, 'cmd_enc> State<'scope, 'snatch_guard, 'cmd_enc> {
                     intersection_types.clone(),
                 ));
             }
+        }
+
+        if let Some(buffer) = indirect_buffer {
+            self.intermediate_trackers
+                .buffers
+                .set_and_remove_from_usage_scope_sparse(
+                    &mut self.pass.scope.buffers,
+                    Some(buffer.tracker_index()),
+                );
         }
 
         flush_bindings_helper(&mut self.pass)?;
@@ -470,7 +511,10 @@ impl RayTracingPass {
         }
 
         cmd_buf_data.push_with(|| -> Result<_, RayTracingPassError> {
-            Ok(ArcCommand::RunRayTracingPass { pass: base? })
+            Ok(ArcCommand::RunRayTracingPass {
+                pass: base?,
+                timestamp_writes: self.timestamp_writes.take(),
+            })
         })
     }
 
@@ -567,12 +611,33 @@ impl RayTracingPass {
                 .handle_error(err, self.label(), "RayTracingPass::trace_rays");
         }
     }
+
+    pub fn trace_rays_indirect_inner(
+        &mut self,
+        buffer: Arc<Buffer>,
+        offset: BufferAddress,
+    ) -> Result<(), PassStateError> {
+        let scope = PassErrorScope::TraceRaysIndirect;
+
+        pass_base!(self, scope)
+            .commands
+            .push(ArcRayTracingCommand::TraceRaysIndirect { buffer, offset });
+
+        Ok(())
+    }
+
+    pub fn trace_rays_indirect(&mut self, buffer: Arc<Buffer>, offset: BufferAddress) {
+        if let Err(err) = self.trace_rays_indirect_inner(buffer, offset) {
+            self.device
+                .handle_error(err, self.label(), "RayTracingPass::trace_rays_indirect");
+        }
+    }
 }
 
 impl CommandEncoder {
     pub fn begin_ray_tracing_pass_inner(
         self: &Arc<Self>,
-        desc: &RayTracingPassDescriptor<'_>,
+        desc: &RayTracingPassDescriptor<'_, PassTimestampWrites<Arc<QuerySet>>>,
     ) -> (RayTracingPass, Option<CommandEncoderError>) {
         use EncoderStateError as SErr;
 
@@ -592,10 +657,35 @@ impl CommandEncoder {
                     );
                 }
 
+                let timestamp_writes = match desc
+                    .timestamp_writes
+                    .as_ref()
+                    .map(|tw| {
+                        Self::validate_pass_timestamp_writes::<RayTracingPassErrorInner>(
+                            &self.device,
+                            tw,
+                        )
+                    })
+                    .transpose()
+                {
+                    Ok(timestamp_writes) => timestamp_writes,
+                    Err(err) => {
+                        return (
+                            RayTracingPass::new_invalid(
+                                self.clone(),
+                                &label,
+                                err.map_pass_err(scope),
+                            ),
+                            None,
+                        );
+                    }
+                };
+
                 let pass = match RayTracingPass::new(
                     self.clone(),
                     RayTracingPassDescriptor {
                         label: label.clone(),
+                        timestamp_writes,
                     },
                 ) {
                     Ok(pass) => pass,
@@ -657,7 +747,7 @@ impl CommandEncoder {
 
     pub fn begin_ray_tracing_pass(
         self: &Arc<Self>,
-        desc: &RayTracingPassDescriptor<'_>,
+        desc: &RayTracingPassDescriptor<'_, PassTimestampWrites<Arc<QuerySet>>>,
     ) -> RayTracingPass {
         let (pass, err) = self.begin_ray_tracing_pass_inner(desc);
         if let Some(err) = err {
@@ -671,6 +761,7 @@ impl CommandEncoder {
 pub(super) fn encode_ray_tracing_pass(
     parent_state: &mut EncodingState<InnerCommandEncoder>,
     mut base: BasePass<ArcRayTracingCommand, Infallible>,
+    mut timestamp_writes: Option<PassTimestampWrites>,
 ) -> Result<(), RayTracingPassError> {
     let pass_scope = PassErrorScope::Pass;
 
@@ -738,8 +829,55 @@ pub(super) fn encode_ray_tracing_pass(
         .textures
         .set_size(indices.textures.size());
 
+    // As a compute pass' timestamps: reset here, as there is no auxiliary
+    // pass to reset them in.
+    let timestamp_writes: Option<hal::PassTimestampWrites<'_, dyn hal::DynQuerySet>> =
+        if let Some(tw) = timestamp_writes.take() {
+            tw.query_set.same_device(device).map_pass_err(pass_scope)?;
+
+            record_pass_timestamp_writes(&tw, state.pass.base.query_set_writes);
+
+            let query_set = state
+                .pass
+                .base
+                .tracker
+                .query_sets
+                .insert_single(tw.query_set);
+
+            let range = if let (Some(index_a), Some(index_b)) =
+                (tw.beginning_of_pass_write_index, tw.end_of_pass_write_index)
+            {
+                Some(index_a.min(index_b)..index_a.max(index_b) + 1)
+            } else {
+                tw.beginning_of_pass_write_index
+                    .or(tw.end_of_pass_write_index)
+                    .map(|i| i..i + 1)
+            };
+            let raw_query_set = query_set
+                .try_raw(parent_state.snatch_guard)
+                .map_pass_err(pass_scope)?;
+            if let Some(range) = range {
+                unsafe {
+                    state
+                        .pass
+                        .base
+                        .raw_encoder
+                        .reset_queries(raw_query_set, range);
+                }
+            }
+
+            Some(hal::PassTimestampWrites {
+                query_set: raw_query_set,
+                beginning_of_pass_write_index: tw.beginning_of_pass_write_index,
+                end_of_pass_write_index: tw.end_of_pass_write_index,
+            })
+        } else {
+            None
+        };
+
     let hal_desc = hal::RayTracingPassDescriptor {
         label: hal_label(base.label.as_deref(), device.instance_flags),
+        timestamp_writes,
     };
 
     unsafe {
@@ -799,6 +937,10 @@ pub(super) fn encode_ray_tracing_pass(
             ArcRayTracingCommand::TraceRays(groups) => {
                 let scope = PassErrorScope::TraceRays;
                 trace_rays(&mut state, groups, device).map_pass_err(scope)?;
+            }
+            ArcRayTracingCommand::TraceRaysIndirect { buffer, offset } => {
+                let scope = PassErrorScope::TraceRaysIndirect;
+                trace_rays_indirect(&mut state, device, buffer, offset).map_pass_err(scope)?;
             }
         }
     }
@@ -903,7 +1045,7 @@ fn trace_rays(
 
     state.is_ready()?;
 
-    state.flush_bindings()?;
+    state.flush_bindings(None)?;
     state.flush_immediates();
 
     let limits = &state.pass.base.device.limits;
@@ -964,28 +1106,107 @@ fn trace_rays(
 
     let current_pipeline = state.pipeline.as_ref().unwrap();
     let shader_binding_data = current_pipeline.shader_binding_data()?;
+    let [ray_generation, miss, intersection] = group_data(shader_binding_data, device);
 
     unsafe {
-        state.pass.base.raw_encoder.trace_rays(
-            dims,
-            hal::PipelineGroupData {
-                buffer: shader_binding_data.raw.as_ref(),
-                offset: 0,
-                stride: device.alignments.ray_tracing_pipeline_group_data_size as _,
-                count: 1,
-            },
-            hal::PipelineGroupData {
-                buffer: shader_binding_data.raw.as_ref(),
-                offset: shader_binding_data.miss_offset,
-                stride: device.alignments.ray_tracing_pipeline_group_data_size as _,
-                count: 1,
-            },
-            hal::PipelineGroupData {
-                buffer: shader_binding_data.raw.as_ref(),
-                offset: shader_binding_data.intersection_offset,
-                stride: device.alignments.ray_tracing_pipeline_group_data_size as _,
-                count: shader_binding_data.num_intersection_groups as _,
-            },
+        state
+            .pass
+            .base
+            .raw_encoder
+            .trace_rays(dims, ray_generation, miss, intersection);
+    }
+    Ok(())
+}
+
+/// The ray generation, miss and intersection regions of a pipeline's
+/// shader binding table.
+fn group_data<'a>(
+    shader_binding_data: &'a crate::ray_tracing_pipeline::ShaderBindingData,
+    device: &Device,
+) -> [hal::PipelineGroupData<'a, dyn hal::DynBuffer>; 3] {
+    let stride = device.alignments.ray_tracing_pipeline_group_data_size as BufferAddress;
+    let region = |offset, count: u32| hal::PipelineGroupData {
+        buffer: shader_binding_data.raw.as_ref(),
+        offset,
+        stride,
+        count: count as _,
+    };
+    [
+        region(0, 1),
+        region(shader_binding_data.miss_offset, shader_binding_data.num_misses),
+        region(
+            shader_binding_data.intersection_offset,
+            shader_binding_data.intersection_records,
+        ),
+    ]
+}
+
+/// A trace of the size `buffer` holds at `offset`.
+///
+/// Unlike a compute pass' indirect dispatch, the size is not checked
+/// against the device's limits: a trace past `max_ray_dispatch_count` rays
+/// is the driver's to handle.
+fn trace_rays_indirect(
+    state: &mut State,
+    device: &Arc<Device>,
+    buffer: Arc<Buffer>,
+    offset: BufferAddress,
+) -> Result<(), RayTracingPassErrorInner> {
+    api_log!("RayTracingPass::trace_rays_indirect");
+
+    buffer.same_device(device)?;
+
+    state.is_ready()?;
+
+    state
+        .pass
+        .base
+        .device
+        .require_downlevel_flags(wgt::DownlevelFlags::INDIRECT_EXECUTION)?;
+
+    buffer.check_usage(wgt::BufferUsages::INDIRECT)?;
+
+    if !offset.is_multiple_of(4) {
+        return Err(RayTracingPassErrorInner::UnalignedIndirectBufferOffset(
+            offset,
+        ));
+    }
+
+    // Three `u32`s: width, height and depth.
+    let args_size = 3 * 4;
+    if buffer.size < args_size || buffer.size - args_size < offset {
+        return Err(RayTracingPassErrorInner::IndirectBufferOverrun {
+            offset,
+            end_offset: offset + args_size,
+            buffer_size: buffer.size,
+        });
+    }
+
+    buffer.check_destroyed(state.pass.base.snatch_guard)?;
+
+    state.pass.base.buffer_memory_init_actions.extend(
+        buffer.initialization_status.read().create_action(
+            &buffer,
+            offset..(offset + args_size),
+            MemoryInitKind::NeedsInitializedMemory,
+        ),
+    );
+
+    state.flush_bindings(Some(&buffer))?;
+    state.flush_immediates();
+
+    let buf_raw = buffer.try_raw(state.pass.base.snatch_guard)?;
+    let current_pipeline = state.pipeline.as_ref().unwrap();
+    let shader_binding_data = current_pipeline.shader_binding_data()?;
+    let [ray_generation, miss, intersection] = group_data(shader_binding_data, device);
+
+    unsafe {
+        state.pass.base.raw_encoder.trace_rays_indirect(
+            ray_generation,
+            miss,
+            intersection,
+            buf_raw,
+            offset,
         );
     }
     Ok(())

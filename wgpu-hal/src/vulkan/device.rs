@@ -735,6 +735,19 @@ impl super::Device {
         naga_stage: naga::ShaderStage,
         binding_map: &naga::back::spv::BindingMap,
     ) -> Result<CompiledStage, crate::PipelineError> {
+        self.compile_ray_tracing_stage(stage, naga_stage, binding_map, None)
+    }
+
+    /// [`Self::compile_stage`], for a stage of a ray tracing pipeline with
+    /// `groups`' hit groups and miss stages, which naga keeps a trace's
+    /// choice of within.
+    fn compile_ray_tracing_stage(
+        &self,
+        stage: &crate::ProgrammableStage<super::ShaderModule>,
+        naga_stage: naga::ShaderStage,
+        binding_map: &naga::back::spv::BindingMap,
+        groups: Option<naga::back::spv::RayTracingPipelineGroups>,
+    ) -> Result<CompiledStage, crate::PipelineError> {
         let stage_flags = crate::auxil::map_naga_stage(naga_stage);
         let vk_module = match *stage.module {
             super::ShaderModule::Raw(raw) => raw,
@@ -754,7 +767,8 @@ impl super::Device {
                     || !stage.zero_initialize_workgroup_memory
                     || !runtime_checks.task_shader_dispatch_tracking
                     || !runtime_checks.mesh_shader_primitive_indices_clamp
-                    || !runtime_checks.int_div_checks;
+                    || !runtime_checks.int_div_checks
+                    || groups.is_some();
 
                 let mut temp_options;
                 let options = if needs_temp_options {
@@ -794,6 +808,7 @@ impl super::Device {
                     temp_options.mesh_shader_primitive_indices_clamp =
                         runtime_checks.mesh_shader_primitive_indices_clamp;
                     temp_options.emit_int_div_checks = runtime_checks.int_div_checks;
+                    temp_options.ray_tracing_pipeline_groups = groups;
 
                     &temp_options
                 } else {
@@ -1015,9 +1030,16 @@ impl crate::Device for super::Device {
         &self,
         desc: &crate::BufferDescriptor,
     ) -> Result<(super::Buffer, wgt::BufferAddress), crate::DeviceError> {
+        let mut usage = conv::map_buffer_usage(desc.usage);
+        // `vkCmdTraceRaysIndirectKHR` reads its arguments by address.
+        if desc.usage.contains(wgt::BufferUses::INDIRECT)
+            && self.shared.extension_fns.ray_tracing_pipelines.is_some()
+        {
+            usage |= vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS;
+        }
         let vk_info = vk::BufferCreateInfo::default()
             .size(desc.size)
-            .usage(conv::map_buffer_usage(desc.usage))
+            .usage(usage)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
 
         let raw = unsafe {
@@ -2460,10 +2482,16 @@ impl crate::Device for super::Device {
         let mut stages = Vec::new();
         let mut groups = Vec::new();
 
-        let compiled_ray_gen = self.compile_stage(
+        let counts = Some(naga::back::spv::RayTracingPipelineGroups {
+            hit_groups: desc.intersection.len() as u32,
+            misses: desc.misses.len() as u32,
+        });
+
+        let compiled_ray_gen = self.compile_ray_tracing_stage(
             &desc.ray_generation,
             naga::ShaderStage::RayGeneration,
             &desc.layout.binding_map,
+            counts,
         )?;
 
         groups.push(
@@ -2477,32 +2505,38 @@ impl crate::Device for super::Device {
 
         stages.push(compiled_ray_gen.create_info);
 
-        let compiled_miss = self.compile_stage(
-            &desc.miss,
-            naga::ShaderStage::Miss,
-            &desc.layout.binding_map,
-        )?;
-
-        groups.push(
-            vk::RayTracingShaderGroupCreateInfoKHR::default()
-                .closest_hit_shader(vk::SHADER_UNUSED_KHR)
-                .any_hit_shader(vk::SHADER_UNUSED_KHR)
-                .intersection_shader(vk::SHADER_UNUSED_KHR)
-                .general_shader(1) // stages always has one element so next index is 1.
-                .ty(vk::RayTracingShaderGroupTypeKHR::GENERAL),
-        );
-
-        stages.push(compiled_miss.create_info);
-
         // This is to keep alive the CStrings, as the ones in the loop would be deallocated
         // causing UB otherwise.
         let mut compiled_stages = Vec::new();
 
+        for miss in desc.misses {
+            let compiled_miss = self.compile_ray_tracing_stage(
+                miss,
+                naga::ShaderStage::Miss,
+                &desc.layout.binding_map,
+                counts,
+            )?;
+
+            groups.push(
+                vk::RayTracingShaderGroupCreateInfoKHR::default()
+                    .closest_hit_shader(vk::SHADER_UNUSED_KHR)
+                    .any_hit_shader(vk::SHADER_UNUSED_KHR)
+                    .intersection_shader(vk::SHADER_UNUSED_KHR)
+                    .general_shader(stages.len() as _)
+                    .ty(vk::RayTracingShaderGroupTypeKHR::GENERAL),
+            );
+
+            stages.push(compiled_miss.create_info);
+
+            compiled_stages.push(compiled_miss);
+        }
+
         for group in desc.intersection {
-            let compiled_closest_hits = self.compile_stage(
+            let compiled_closest_hits = self.compile_ray_tracing_stage(
                 &group.closest_hit,
                 naga::ShaderStage::ClosestHit,
                 &desc.layout.binding_map,
+                counts,
             )?;
 
             let closest_idx = stages.len();
@@ -2520,10 +2554,11 @@ impl crate::Device for super::Device {
                     .ty(vk::RayTracingShaderGroupTypeKHR::TRIANGLES_HIT_GROUP);
 
             if let Some(any_hit) = &group.any_hit {
-                let compiled_any_hit = self.compile_stage(
+                let compiled_any_hit = self.compile_ray_tracing_stage(
                     any_hit,
                     naga::ShaderStage::AnyHit,
                     &desc.layout.binding_map,
+                    counts,
                 )?;
 
                 let any_idx = stages.len();
@@ -2568,10 +2603,6 @@ impl crate::Device for super::Device {
         }?;
 
         if let Some(raw_module) = compiled_ray_gen.temp_raw_module {
-            unsafe { self.shared.raw.destroy_shader_module(raw_module, None) };
-        }
-
-        if let Some(raw_module) = compiled_miss.temp_raw_module {
             unsafe { self.shared.raw.destroy_shader_module(raw_module, None) };
         }
 

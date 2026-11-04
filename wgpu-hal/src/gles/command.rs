@@ -1318,7 +1318,10 @@ impl crate::CommandEncoder for super::CommandEncoder {
         unimplemented!()
     }
 
-    unsafe fn begin_ray_tracing_pass(&mut self, _desc: &crate::RayTracingPassDescriptor) {
+    unsafe fn begin_ray_tracing_pass(
+        &mut self,
+        _desc: &crate::RayTracingPassDescriptor<super::QuerySet>,
+    ) {
         unimplemented!()
     }
 
@@ -1339,6 +1342,17 @@ impl crate::CommandEncoder for super::CommandEncoder {
         _ray_generation_group_data: crate::PipelineGroupData<super::Buffer>,
         _miss_group_data: crate::PipelineGroupData<super::Buffer>,
         _intersection_group_data: crate::PipelineGroupData<super::Buffer>,
+    ) {
+        unimplemented!()
+    }
+
+    unsafe fn trace_rays_indirect(
+        &mut self,
+        _ray_generation_group_data: crate::PipelineGroupData<super::Buffer>,
+        _miss_group_data: crate::PipelineGroupData<super::Buffer>,
+        _intersection_group_data: crate::PipelineGroupData<super::Buffer>,
+        _buffer: &super::Buffer,
+        _offset: wgt::BufferAddress,
     ) {
         unimplemented!()
     }

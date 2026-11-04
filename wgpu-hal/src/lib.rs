@@ -1909,7 +1909,10 @@ pub trait CommandEncoder: WasmNotSendSync + fmt::Debug {
     /// [`end_render_pass`]: CommandEncoder::end_render_pass
     /// [`end_compute_pass`]: CommandEncoder::end_compute_pass
     /// [`end_ray_tracing_pass`]: CommandEncoder::end_ray_tracing_pass
-    unsafe fn begin_ray_tracing_pass(&mut self, desc: &RayTracingPassDescriptor);
+    unsafe fn begin_ray_tracing_pass(
+        &mut self,
+        desc: &RayTracingPassDescriptor<<Self::A as Api>::QuerySet>,
+    );
 
     /// End the current compute pass.
     ///
@@ -1933,6 +1936,24 @@ pub trait CommandEncoder: WasmNotSendSync + fmt::Debug {
         ray_generation_group_data: PipelineGroupData<'a, <Self::A as Api>::Buffer>,
         miss_group_data: PipelineGroupData<'a, <Self::A as Api>::Buffer>,
         intersection_group_data: PipelineGroupData<'a, <Self::A as Api>::Buffer>,
+    );
+
+    /// Like [`trace_rays`], with the launch's width, height and depth read
+    /// as three `u32`s from `buffer` at `offset` when the trace runs.
+    ///
+    /// # Safety
+    ///
+    /// - `buffer` must have been created with [`wgt::BufferUses::INDIRECT`]
+    ///   usage, and hold 12 bytes at `offset`.
+    ///
+    /// [`trace_rays`]: CommandEncoder::trace_rays
+    unsafe fn trace_rays_indirect<'a>(
+        &mut self,
+        ray_generation_group_data: PipelineGroupData<'a, <Self::A as Api>::Buffer>,
+        miss_group_data: PipelineGroupData<'a, <Self::A as Api>::Buffer>,
+        intersection_group_data: PipelineGroupData<'a, <Self::A as Api>::Buffer>,
+        buffer: &'a <Self::A as Api>::Buffer,
+        offset: wgt::BufferAddress,
     );
 
     /// To get the required sizes for the buffer allocations use `get_acceleration_structure_build_sizes` per descriptor
@@ -2781,8 +2802,9 @@ pub struct RayTracingPipelineDescriptor<
     pub layout: &'a Pl,
     /// The ray generation stage.
     pub ray_generation: ProgrammableStage<'a, M>,
-    /// The miss stage.
-    pub miss: ProgrammableStage<'a, M>,
+    /// The miss stages, at least one: a trace calls the one its miss index
+    /// names.
+    pub misses: &'a [ProgrammableStage<'a, M>],
     /// All the object intersection stages.
     pub intersection: &'a [RayObjectIntersectionState<'a, M>],
     /// The maximum recursion depth allowed for the ray tracing (ray_generation shader counts as depth 0).
@@ -3033,8 +3055,9 @@ pub struct ComputePassDescriptor<'a, Q: DynQuerySet + ?Sized> {
 }
 
 #[derive(Clone, Debug)]
-pub struct RayTracingPassDescriptor<'a> {
+pub struct RayTracingPassDescriptor<'a, Q: DynQuerySet + ?Sized> {
     pub label: Label<'a>,
+    pub timestamp_writes: Option<PassTimestampWrites<'a, Q>>,
 }
 
 #[cfg(test)]
