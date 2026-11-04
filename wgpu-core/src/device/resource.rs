@@ -3260,7 +3260,9 @@ impl Device {
                 wgt::ShaderStages::RAY_GENERATION
                     | wgt::ShaderStages::ANY_HIT
                     | wgt::ShaderStages::CLOSEST_HIT
-                    | wgt::ShaderStages::MISS,
+                    | wgt::ShaderStages::MISS
+                    | wgt::ShaderStages::INTERSECTION
+                    | wgt::ShaderStages::CALLABLE,
             ) {
                 required_features |= wgt::Features::EXPERIMENTAL_RAY_TRACING_PIPELINES;
             }

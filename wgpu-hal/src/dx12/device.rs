@@ -136,6 +136,24 @@ impl super::Device {
             None
         };
 
+        let dispatch_rays = if features
+            .features_wgpu
+            .contains(wgt::FeaturesWGPU::EXPERIMENTAL_RAY_TRACING_PIPELINES)
+        {
+            Some(Self::create_command_signature(
+                &raw,
+                None,
+                size_of::<Direct3D12::D3D12_DISPATCH_RAYS_DESC>(),
+                &[Direct3D12::D3D12_INDIRECT_ARGUMENT_DESC {
+                    Type: Direct3D12::D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH_RAYS,
+                    ..Default::default()
+                }],
+                0,
+            )?)
+        } else {
+            None
+        };
+
         let shared = super::DeviceShared {
             adapter,
             zero_buffer,
@@ -171,6 +189,7 @@ impl super::Device {
                     }],
                     0,
                 )?,
+                dispatch_rays,
             },
             heap_views: descriptor::GeneralHeap::new(
                 &raw,
@@ -232,6 +251,11 @@ impl super::Device {
         })
     }
 
+    /// `name`, nul-terminated in UTF-16, as Direct3D's strings are.
+    fn wide_name(name: &str) -> Vec<u16> {
+        name.encode_utf16().chain(Some(0)).collect()
+    }
+
     fn create_command_signature(
         raw: &Direct3D12::ID3D12Device,
         root_signature: Option<&Direct3D12::ID3D12RootSignature>,
@@ -287,10 +311,34 @@ impl super::Device {
         fragment_stage: Option<&crate::ProgrammableStage<super::ShaderModule>>,
         multisampled: bool,
     ) -> Result<super::CompiledShader, crate::PipelineError> {
+        self.load_named_shader(
+            stage,
+            layout,
+            naga_stage,
+            fragment_stage,
+            multisampled,
+            None,
+        )
+        .map(|(shader, _)| shader)
+    }
+
+    /// [`Self::load_shader`], for a stage of a ray tracing pipeline with
+    /// `groups`' hit groups, miss and callable stages too, with the name the
+    /// stage's entry point has in the compiled shader.
+    fn load_named_shader(
+        &self,
+        stage: &crate::ProgrammableStage<super::ShaderModule>,
+        layout: &super::PipelineLayout,
+        naga_stage: naga::ShaderStage,
+        fragment_stage: Option<&crate::ProgrammableStage<super::ShaderModule>>,
+        multisampled: bool,
+        groups: Option<naga::back::RayTracingPipelineGroups>,
+    ) -> Result<(super::CompiledShader, String), crate::PipelineError> {
         let stage_bit = auxil::map_naga_stage(naga_stage);
 
-        let needs_temp_options = stage.zero_initialize_workgroup_memory
-            != layout.naga_options.zero_initialize_workgroup_memory
+        let needs_temp_options = groups.is_some()
+            || stage.zero_initialize_workgroup_memory
+                != layout.naga_options.zero_initialize_workgroup_memory
             || stage.module.runtime_checks.bounds_checks != layout.naga_options.restrict_indexing
             || !stage.module.runtime_checks.task_shader_dispatch_tracking
             || !stage
@@ -321,6 +369,7 @@ impl super::Device {
                 .module
                 .runtime_checks
                 .ray_query_initialization_tracking;
+            temp_options.ray_tracing_pipeline_groups = groups;
             &temp_options
         } else {
             &layout.naga_options
@@ -403,8 +452,9 @@ impl super::Device {
                 shader_model: naga_options.shader_model,
             },
             super::ShaderModuleSource::DxilPassthrough(passthrough) => {
-                return Ok(super::CompiledShader::Precompiled(
-                    passthrough.shader.clone(),
+                return Ok((
+                    super::CompiledShader::Precompiled(passthrough.shader.clone()),
+                    stage.entry_point.to_string(),
                 ))
             }
         };
@@ -414,7 +464,7 @@ impl super::Device {
             let nr_of_shaders_compiled = shader_cache.nr_of_shaders_compiled;
             if let Some(value) = shader_cache.entries.get_mut(&key) {
                 value.last_used = nr_of_shaders_compiled;
-                return Ok(value.shader.clone());
+                return Ok((value.shader.clone(), key.entry_point.clone()));
             }
         }
 
@@ -443,6 +493,8 @@ impl super::Device {
                 last_used: nr_of_shaders_compiled,
                 shader: compiled_shader.clone(),
             };
+
+            let entry_point = key.entry_point.clone();
             shader_cache.entries.insert(key, value);
 
             // Retain all entries that have been used since we compiled the last 100 shaders.
@@ -451,9 +503,8 @@ impl super::Device {
                     .entries
                     .retain(|_, v| v.last_used >= nr_of_shaders_compiled - 100);
             }
+            Ok((compiled_shader, entry_point))
         }
-
-        Ok(compiled_shader)
     }
 
     pub fn raw_device(&self) -> &Direct3D12::ID3D12Device {
@@ -1523,6 +1574,8 @@ impl crate::Device for super::Device {
                     )?,
                     // Mesh pipelines don't support updating special constants.
                     draw_mesh: None,
+                    // Nor do ray tracing pipelines, which take none.
+                    dispatch_rays: None,
                     dispatch: Self::create_command_signature(
                         &self.raw,
                         Some(&raw),
@@ -1564,6 +1617,7 @@ impl crate::Device for super::Device {
             },
             bind_group_infos,
             naga_options: hlsl::Options {
+                ray_tracing_pipeline_groups: None,
                 shader_model: self.shared.private_caps.shader_model,
                 binding_map,
                 fake_missing_bindings: false,
@@ -2357,25 +2411,240 @@ impl crate::Device for super::Device {
 
     unsafe fn create_ray_tracing_pipeline(
         &self,
-        _desc: &crate::RayTracingPipelineDescriptor<
+        desc: &crate::RayTracingPipelineDescriptor<
             super::PipelineLayout,
             super::ShaderModule,
             super::PipelineCache,
         >,
     ) -> Result<<Self::A as crate::Api>::RayTracingPipeline, crate::PipelineError> {
-        unreachable!("ray tracing pipelines not yet implemented")
+        // A state object of DXIL libraries, one a stage, each exporting its
+        // stage under a name of the pipeline's own; the hit groups, by name
+        // too; the payloads' and attributes' sizes; the recursion; and the
+        // layout's root signature, global to every stage.
+        let groups = naga::back::RayTracingPipelineGroups {
+            hit_groups: desc.intersection.len() as u32,
+            misses: desc.misses.len() as u32,
+            max_geometry_stride: desc.max_geometry_stride,
+            callables: desc.callables.len() as u32,
+        };
+        let mut libraries: Vec<(super::CompiledShader, Vec<u16>, Vec<u16>)> = Vec::new();
+        let mut payload_size = 4;
+        let mut attribute_size = 8;
+        let mut compile = |stage: &crate::ProgrammableStage<super::ShaderModule>,
+                           naga_stage: naga::ShaderStage|
+         -> Result<Vec<u16>, crate::PipelineError> {
+            if let super::ShaderModuleSource::Naga(ref naga_shader) = stage.module.source {
+                let module = &naga_shader.module;
+                for (_, global) in module.global_variables.iter() {
+                    let size = module.types[global.ty].inner.size(module.to_ctx());
+                    match global.space {
+                        naga::AddressSpace::RayPayload
+                        | naga::AddressSpace::IncomingRayPayload
+                        | naga::AddressSpace::CallableData
+                        | naga::AddressSpace::IncomingCallableData => {
+                            payload_size = payload_size.max(size)
+                        }
+                        naga::AddressSpace::RayHitAttribute => {
+                            attribute_size = attribute_size.max(size)
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            let (shader, entry_point) =
+                self.load_named_shader(stage, desc.layout, naga_stage, None, false, Some(groups))?;
+            let name = Self::wide_name(&format!("stage_{}", libraries.len()));
+            libraries.push((shader, name.clone(), Self::wide_name(&entry_point)));
+            Ok(name)
+        };
+        let ray_generation = compile(&desc.ray_generation, naga::ShaderStage::RayGeneration)?;
+        let misses = desc
+            .misses
+            .iter()
+            .map(|miss| compile(miss, naga::ShaderStage::Miss))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut hit_groups = Vec::with_capacity(desc.intersection.len());
+        for group in desc.intersection {
+            let closest_hit = group
+                .closest_hit
+                .as_ref()
+                .map(|stage| compile(stage, naga::ShaderStage::ClosestHit))
+                .transpose()?;
+            let any_hit = group
+                .any_hit
+                .as_ref()
+                .map(|stage| compile(stage, naga::ShaderStage::AnyHit))
+                .transpose()?;
+            let intersection = group
+                .intersection
+                .as_ref()
+                .map(|stage| compile(stage, naga::ShaderStage::Intersection))
+                .transpose()?;
+            hit_groups.push((
+                Self::wide_name(&format!("group_{}", hit_groups.len())),
+                closest_hit,
+                any_hit,
+                intersection,
+            ));
+        }
+        let callables = desc
+            .callables
+            .iter()
+            .map(|callable| compile(callable, naga::ShaderStage::Callable))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let pointer = |name: &Option<Vec<u16>>| match name {
+            Some(name) => windows::core::PCWSTR(name.as_ptr()),
+            None => windows::core::PCWSTR::null(),
+        };
+        let mut exports: Vec<Direct3D12::D3D12_EXPORT_DESC> = libraries
+            .iter()
+            .map(|(_, name, rename)| Direct3D12::D3D12_EXPORT_DESC {
+                Name: windows::core::PCWSTR(name.as_ptr()),
+                ExportToRename: windows::core::PCWSTR(rename.as_ptr()),
+                Flags: Direct3D12::D3D12_EXPORT_FLAG_NONE,
+            })
+            .collect();
+        let library_descs: Vec<Direct3D12::D3D12_DXIL_LIBRARY_DESC> = libraries
+            .iter()
+            .zip(exports.iter_mut())
+            .map(
+                |((shader, _, _), export)| Direct3D12::D3D12_DXIL_LIBRARY_DESC {
+                    DXILLibrary: shader.create_native_shader(),
+                    NumExports: 1,
+                    pExports: export,
+                },
+            )
+            .collect();
+        let hit_group_descs: Vec<Direct3D12::D3D12_HIT_GROUP_DESC> = hit_groups
+            .iter()
+            .map(
+                |(name, closest_hit, any_hit, intersection)| Direct3D12::D3D12_HIT_GROUP_DESC {
+                    HitGroupExport: windows::core::PCWSTR(name.as_ptr()),
+                    Type: match intersection {
+                        Some(_) => Direct3D12::D3D12_HIT_GROUP_TYPE_PROCEDURAL_PRIMITIVE,
+                        None => Direct3D12::D3D12_HIT_GROUP_TYPE_TRIANGLES,
+                    },
+                    AnyHitShaderImport: pointer(any_hit),
+                    ClosestHitShaderImport: pointer(closest_hit),
+                    IntersectionShaderImport: pointer(intersection),
+                },
+            )
+            .collect();
+        let shader_config = Direct3D12::D3D12_RAYTRACING_SHADER_CONFIG {
+            MaxPayloadSizeInBytes: payload_size.next_multiple_of(4),
+            MaxAttributeSizeInBytes: attribute_size
+                .next_multiple_of(4)
+                .min(Direct3D12::D3D12_RAYTRACING_MAX_ATTRIBUTE_SIZE_IN_BYTES),
+        };
+        let pipeline_config = Direct3D12::D3D12_RAYTRACING_PIPELINE_CONFIG {
+            MaxTraceRecursionDepth: desc.max_recursion_depth,
+        };
+        let root_signature = Direct3D12::D3D12_GLOBAL_ROOT_SIGNATURE {
+            pGlobalRootSignature: unsafe {
+                borrow_optional_interface_temporarily(&desc.layout.shared.signature)
+            },
+        };
+        let subobject = |ty, desc: *const ffi::c_void| Direct3D12::D3D12_STATE_SUBOBJECT {
+            Type: ty,
+            pDesc: desc,
+        };
+        let mut subobjects: Vec<Direct3D12::D3D12_STATE_SUBOBJECT> = library_descs
+            .iter()
+            .map(|library| {
+                subobject(
+                    Direct3D12::D3D12_STATE_SUBOBJECT_TYPE_DXIL_LIBRARY,
+                    <*const _>::cast(library),
+                )
+            })
+            .collect();
+        subobjects.extend(hit_group_descs.iter().map(|group| {
+            subobject(
+                Direct3D12::D3D12_STATE_SUBOBJECT_TYPE_HIT_GROUP,
+                <*const _>::cast(group),
+            )
+        }));
+        subobjects.push(subobject(
+            Direct3D12::D3D12_STATE_SUBOBJECT_TYPE_RAYTRACING_SHADER_CONFIG,
+            <*const _>::cast(&shader_config),
+        ));
+        subobjects.push(subobject(
+            Direct3D12::D3D12_STATE_SUBOBJECT_TYPE_RAYTRACING_PIPELINE_CONFIG,
+            <*const _>::cast(&pipeline_config),
+        ));
+        subobjects.push(subobject(
+            Direct3D12::D3D12_STATE_SUBOBJECT_TYPE_GLOBAL_ROOT_SIGNATURE,
+            <*const _>::cast(&root_signature),
+        ));
+        let state_desc = Direct3D12::D3D12_STATE_OBJECT_DESC {
+            Type: Direct3D12::D3D12_STATE_OBJECT_TYPE_RAYTRACING_PIPELINE,
+            NumSubobjects: subobjects.len() as u32,
+            pSubobjects: subobjects.as_ptr(),
+        };
+        let device5 = self
+            .raw
+            .cast::<Direct3D12::ID3D12Device5>()
+            .map_err(|error| {
+                crate::PipelineError::Linkage(wgt::ShaderStages::RAY_GENERATION, error.to_string())
+            })?;
+        let state: Direct3D12::ID3D12StateObject = {
+            profiling::scope!("ID3D12Device5::CreateStateObject");
+            unsafe { device5.CreateStateObject(&state_desc) }
+        }
+        .map_err(|error| {
+            crate::PipelineError::Linkage(wgt::ShaderStages::RAY_GENERATION, error.to_string())
+        })?;
+        let properties = state
+            .cast::<Direct3D12::ID3D12StateObjectProperties>()
+            .map_err(|error| {
+                crate::PipelineError::Linkage(wgt::ShaderStages::RAY_GENERATION, error.to_string())
+            })?;
+        if let Some(label) = desc.label {
+            state.set_name(label)?;
+        }
+
+        // Each group's name, as the hal numbers groups.
+        let mut group_names = vec![ray_generation];
+        group_names.extend(misses);
+        group_names.extend(hit_groups.into_iter().map(|(name, ..)| name));
+        group_names.extend(callables);
+
+        self.counters.ray_tracing_pipelines.add(1);
+
+        Ok(super::RayTracingPipeline {
+            state,
+            properties,
+            layout: desc.layout.shared.clone(),
+            group_names,
+        })
     }
 
     unsafe fn destroy_ray_tracing_pipeline(&self, _pipeline: super::RayTracingPipeline) {
-        unreachable!("ray tracing pipelines not yet implemented")
+        self.counters.ray_tracing_pipelines.sub(1);
     }
 
     unsafe fn get_raytracing_pipeline_group_data(
         &self,
-        _pipeline: &super::RayTracingPipeline,
-        _groups: core::ops::Range<u32>,
+        pipeline: &super::RayTracingPipeline,
+        groups: core::ops::Range<u32>,
     ) -> Result<Vec<u8>, crate::DeviceError> {
-        unimplemented!("ray tracing pipelines not yet implemented")
+        let size = Direct3D12::D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES as usize;
+        let mut data = Vec::with_capacity(groups.len() * size);
+        for group in groups {
+            let name = &pipeline.group_names[group as usize];
+            let identifier = unsafe {
+                pipeline
+                    .properties
+                    .GetShaderIdentifier(windows::core::PCWSTR(name.as_ptr()))
+            };
+            if identifier.is_null() {
+                return Err(crate::DeviceError::Unexpected);
+            }
+            data.extend_from_slice(unsafe {
+                core::slice::from_raw_parts(identifier.cast::<u8>(), size)
+            });
+        }
+        Ok(data)
     }
 
     unsafe fn create_pipeline_cache(
@@ -2761,7 +3030,8 @@ impl crate::Device for super::Device {
         let temp = Direct3D12::D3D12_RAYTRACING_INSTANCE_DESC {
             Transform: instance.transform,
             _bitfield1: (instance.custom_data & MAX_U24) | (u32::from(instance.mask) << 24),
-            _bitfield2: (instance.pipeline_intersection_data_offset & MAX_U24),
+            _bitfield2: (instance.pipeline_intersection_data_offset & MAX_U24)
+                | (u32::from(instance.flags.bits()) << 24),
             AccelerationStructure: instance.blas_address,
         };
 

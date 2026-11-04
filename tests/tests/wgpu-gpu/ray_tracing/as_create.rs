@@ -37,6 +37,7 @@ fn invalid_vertex_format_blas_create(ctx: TestingContext) {
         index_format: None,
         index_count: None,
         flags: AccelerationStructureGeometryFlags::empty(),
+        opacity_micromap: Vec::new(),
     };
 
     fail(
@@ -79,6 +80,7 @@ fn mismatched_index_blas_create(ctx: TestingContext) {
         index_format: Some(IndexFormat::Uint32),
         index_count: None,
         flags: AccelerationStructureGeometryFlags::empty(),
+        opacity_micromap: Vec::new(),
     };
 
     fail(
@@ -108,6 +110,7 @@ fn mismatched_index_blas_create(ctx: TestingContext) {
         index_format: None,
         index_count: Some(3),
         flags: AccelerationStructureGeometryFlags::empty(),
+        opacity_micromap: Vec::new(),
     };
 
     fail(

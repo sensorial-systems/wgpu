@@ -142,6 +142,24 @@ impl super::CommandEncoder {
                                         vertex_stride: tg.vertex_stride,
                                         first_index: tg.first_index,
                                         transform_buffer_offset: tg.transform_buffer_offset,
+                                        end_vertex_buffer: tg
+                                            .end_vertex_buffer
+                                            .map(|end_vertex_buffer| -> Result<_, InvalidResourceError> {
+                                                end_vertex_buffer.check_is_valid()?;
+                                                Ok(end_vertex_buffer)
+                                            })
+                                            .transpose()?,
+                                        opacity_micromap: match tg.opacity_micromap {
+                                            Some(micromap) => {
+                                                micromap.data.check_is_valid()?;
+                                                micromap.triangles.check_is_valid()?;
+                                                if let Some((ref indices, _)) = micromap.indices {
+                                                    indices.check_is_valid()?;
+                                                }
+                                                Some(micromap)
+                                            }
+                                            None => None,
+                                        },
                                     })
                                 })
                                 .collect::<Result<_, BuildAccelerationStructureError>>()?;
@@ -281,6 +299,32 @@ pub(crate) fn build_acceleration_structures(
                     .require_features(Features::EXPERIMENTAL_RAY_TRACING_PIPELINES)?;
             }
 
+            // Every instance of a structure that moves has an end transform:
+            // one that does not move ends where it starts.
+            let moves = tlas
+                .flags
+                .contains(wgpu_types::AccelerationStructureFlags::ALLOW_MOTION);
+            let end_transform = match (moves, instance.end_transform) {
+                (true, end_transform) => Some(end_transform.unwrap_or(instance.transform)),
+                (false, None) => None,
+                (false, Some(_)) => {
+                    return Err(BuildAccelerationStructureError::EndTransformWithoutMotion(
+                        tlas.error_ident(),
+                        instance_idx,
+                    ))
+                }
+            };
+            if !moves
+                && blas
+                    .flags
+                    .contains(wgpu_types::AccelerationStructureFlags::ALLOW_MOTION)
+            {
+                return Err(BuildAccelerationStructureError::TlasDependentMoves(
+                    tlas.error_ident(),
+                    blas.error_ident(),
+                ));
+            }
+
             state.device.raw().tlas_instance_to_bytes(
                 hal::TlasInstance {
                     transform: instance.transform,
@@ -288,6 +332,8 @@ pub(crate) fn build_acceleration_structures(
                     mask: instance.mask,
                     blas_address: blas.handle,
                     pipeline_intersection_data_offset: instance.intersection_index,
+                    flags: instance.flags,
+                    end_transform,
                 },
                 &mut instance_buffer_staging_source,
             );
@@ -311,6 +357,14 @@ pub(crate) fn build_acceleration_structures(
 
             let intersection_ty = crate::resource::TlasIntersectionType {
                 index: instance.intersection_index,
+                geometries: match blas.sizes {
+                    wgt::BlasGeometrySizeDescriptors::Triangles { ref descriptors } => {
+                        descriptors.len() as u32
+                    }
+                    wgt::BlasGeometrySizeDescriptors::AABBs { ref descriptors } => {
+                        descriptors.len() as u32
+                    }
+                },
                 required_intersection_ty: match blas.sizes {
                     wgt::BlasGeometrySizeDescriptors::Triangles { .. } => {
                         crate::ray_tracing_pipeline::RayTracingIntersectionType::Triangle
@@ -604,7 +658,7 @@ impl CommandBufferMutable {
                         blas.try_raw(snatch_guard)?;
                     }
                 }
-                AsAction::TraceTlas(tlas, intersection_types) => {
+                AsAction::TraceTlas(tlas, intersection_types, max_geometry_stride) => {
                     let current_max = tlas.max_intersection_index.read();
 
                     let max_intersection_len = u32::try_from(intersection_types.len())
@@ -623,33 +677,41 @@ impl CommandBufferMutable {
 
                     let required_intersection_types = tlas.required_intersection_types.read();
 
-                    for intersection_ty in required_intersection_types.iter() {
-                        let Ok(index) = usize::try_from(intersection_ty.index) else {
-                            return Err(
-                                ValidateAsActionsError::TlasInstancesIntersectionIndicesDiffer(
-                                    tlas.error_ident(),
-                                    intersection_ty.required_intersection_ty,
-                                    intersection_ty.index,
-                                    None,
-                                ),
-                            );
+                    // Each hit group a geometry reaches, at any stride the
+                    // pipeline allows: the instance's own, and those its
+                    // later geometries step to.
+                    let reached = required_intersection_types
+                        .iter()
+                        .flat_map(|intersection_ty| {
+                            let steps = intersection_ty.geometries.saturating_sub(1) as u64;
+                            (0..=u64::from(*max_geometry_stride)).flat_map(move |stride| {
+                                (0..=steps).map(move |geometry| {
+                                    (
+                                        intersection_ty,
+                                        u64::from(intersection_ty.index) + geometry * stride,
+                                    )
+                                })
+                            })
+                        });
+                    for (intersection_ty, index) in reached {
+                        let invalid = || {
+                            ValidateAsActionsError::TlasInstancesIntersectionIndicesDiffer(
+                                tlas.error_ident(),
+                                intersection_ty.required_intersection_ty,
+                                u32::try_from(index).unwrap_or(u32::MAX),
+                                None,
+                            )
+                        };
+                        let Ok(index) = usize::try_from(index) else {
+                            return Err(invalid());
                         };
                         match intersection_types.get(index) {
                             Some(ty) => {
                                 if *ty != intersection_ty.required_intersection_ty {
-                                    return Err(ValidateAsActionsError::TlasInstancesIntersectionIndicesDiffer(tlas.error_ident(), intersection_ty.required_intersection_ty, intersection_ty.index, Some(*ty)));
+                                    return Err(ValidateAsActionsError::TlasInstancesIntersectionIndicesDiffer(tlas.error_ident(), intersection_ty.required_intersection_ty, index as u32, Some(*ty)));
                                 }
                             }
-                            None => {
-                                return Err(
-                                    ValidateAsActionsError::TlasInstancesIntersectionIndicesDiffer(
-                                        tlas.error_ident(),
-                                        intersection_ty.required_intersection_ty,
-                                        intersection_ty.index,
-                                        None,
-                                    ),
-                                );
-                            }
+                            None => return Err(invalid()),
                         }
                     }
                 }
@@ -854,6 +916,156 @@ fn iter_blas<'snatch_guard: 'buffers, 'buffers>(
                         );
                         vertex_raw
                     };
+                    // The end vertices of a structure that moves: as many, as
+                    // laid out, as its vertices.
+                    let moves = blas
+                        .flags
+                        .contains(wgt::AccelerationStructureFlags::ALLOW_MOTION);
+                    let end_vertex_buffer = match (moves, mesh.end_vertex_buffer.as_ref()) {
+                        (false, None) => None,
+                        (false, Some(_)) => {
+                            return Err(BuildAccelerationStructureError::EndVerticesWithoutMotion(
+                                blas.error_ident(),
+                            ))
+                        }
+                        (true, None) => {
+                            return Err(BuildAccelerationStructureError::MissingEndVertices(
+                                blas.error_ident(),
+                            ))
+                        }
+                        (true, Some(end_vertex_buffer)) => {
+                            let end_pending = state.tracker.buffers.set_single(
+                                end_vertex_buffer,
+                                BufferUses::BOTTOM_LEVEL_ACCELERATION_STRUCTURE_INPUT,
+                            );
+                            let end_raw = end_vertex_buffer.try_raw(state.snatch_guard)?;
+                            end_vertex_buffer.check_usage(BufferUsages::BLAS_INPUT)?;
+                            if let Some(barrier) = end_pending.map(|pending| {
+                                pending.into_hal(end_vertex_buffer.as_ref(), state.snatch_guard)
+                            }) {
+                                input_barriers.push(barrier);
+                            }
+                            let offset = u64::from(mesh.first_vertex) * mesh.vertex_stride;
+                            let size = u64::from(mesh.size.vertex_count) * mesh.vertex_stride;
+                            if end_vertex_buffer.size < offset + size {
+                                return Err(
+                                    BuildAccelerationStructureError::InsufficientBufferSize {
+                                        buffer_ident: end_vertex_buffer.error_ident(),
+                                        offset,
+                                        region_size: size,
+                                        buffer_size: end_vertex_buffer.size,
+                                    },
+                                );
+                            }
+                            state.buffer_memory_init_actions.extend(
+                                end_vertex_buffer
+                                    .initialization_status
+                                    .read()
+                                    .create_action(
+                                        end_vertex_buffer,
+                                        offset..offset + size,
+                                        MemoryInitKind::NeedsInitializedMemory,
+                                    ),
+                            );
+                            Some(end_raw)
+                        }
+                    };
+                    // The opacity micromap of a geometry created with one:
+                    // its micromap's triangles, 8 bytes each, and an index of
+                    // one, 4 bytes, for each of the geometry's triangles.
+                    let opacity_micromap = match (
+                        size_desc.opacity_micromap.is_empty(),
+                        mesh.opacity_micromap.as_ref(),
+                    ) {
+                        (true, None) => None,
+                        (true, Some(_)) => {
+                            return Err(
+                                BuildAccelerationStructureError::OpacityMicromapWithoutUsage(
+                                    blas.error_ident(),
+                                ),
+                            )
+                        }
+                        (false, None) => {
+                            return Err(BuildAccelerationStructureError::MissingOpacityMicromap(
+                                blas.error_ident(),
+                            ))
+                        }
+                        (false, Some(micromap)) => {
+                            if mesh.size.opacity_micromap != size_desc.opacity_micromap {
+                                return Err(
+                                    BuildAccelerationStructureError::IncompatibleOpacityMicromap(
+                                        blas.error_ident(),
+                                    ),
+                                );
+                            }
+                            let micromap_triangles: u64 = size_desc
+                                .opacity_micromap
+                                .iter()
+                                .map(|usage| u64::from(usage.count))
+                                .sum();
+                            let triangles = u64::from(
+                                mesh.size.index_count.unwrap_or(mesh.size.vertex_count) / 3,
+                            );
+                            let mut input = |buffer: &'buffers Arc<Buffer>,
+                                             offset: wgt::BufferAddress,
+                                             size: Option<wgt::BufferAddress>|
+                             -> Result<_, BuildAccelerationStructureError> {
+                                let pending = state.tracker.buffers.set_single(
+                                    buffer,
+                                    BufferUses::BOTTOM_LEVEL_ACCELERATION_STRUCTURE_INPUT,
+                                );
+                                let raw = buffer.try_raw(state.snatch_guard)?;
+                                buffer.check_usage(BufferUsages::BLAS_INPUT)?;
+                                if let Some(barrier) = pending
+                                    .map(|pending| pending.into_hal(buffer.as_ref(), state.snatch_guard))
+                                {
+                                    input_barriers.push(barrier);
+                                }
+                                // A size where it is known; the data, to the
+                                // end of its buffer.
+                                let end = match size {
+                                    Some(size) => offset.checked_add(size),
+                                    None => (offset < buffer.size).then_some(buffer.size),
+                                };
+                                let Some(end) = end.filter(|&end| end <= buffer.size) else {
+                                    return Err(BuildAccelerationStructureError::InsufficientBufferSize {
+                                        buffer_ident: buffer.error_ident(),
+                                        offset,
+                                        region_size: size.unwrap_or(0),
+                                        buffer_size: buffer.size,
+                                    });
+                                };
+                                state.buffer_memory_init_actions.extend(
+                                    buffer.initialization_status.read().create_action(
+                                        buffer,
+                                        offset..end,
+                                        MemoryInitKind::NeedsInitializedMemory,
+                                    ),
+                                );
+                                Ok(raw)
+                            };
+                            let data = input(&micromap.data, micromap.data_offset, None)?;
+                            let micromap_triangle_records = input(
+                                &micromap.triangles,
+                                micromap.triangles_offset,
+                                Some(micromap_triangles * 8),
+                            )?;
+                            let indices = match micromap.indices {
+                                Some((ref indices, offset)) => {
+                                    Some((input(indices, offset, Some(triangles * 4))?, offset))
+                                }
+                                None => None,
+                            };
+                            Some(hal::AccelerationStructureOpacityMicromap {
+                                data: Some(data),
+                                data_offset: micromap.data_offset,
+                                triangles: Some(micromap_triangle_records),
+                                triangles_offset: micromap.triangles_offset,
+                                indices,
+                                usage: &size_desc.opacity_micromap,
+                            })
+                        }
+                    };
                     let index_buffer = if let Some(ref index_buffer) = mesh.index_buffer {
                         if mesh.first_index.is_none()
                             || mesh.size.index_count.is_none()
@@ -1032,6 +1244,8 @@ fn iter_blas<'snatch_guard: 'buffers, 'buffers>(
                             }
                         }),
                         flags: mesh.size.flags,
+                        end_vertex_buffer,
+                        opacity_micromap,
                     };
                     triangle_entries.push(triangles);
                 }

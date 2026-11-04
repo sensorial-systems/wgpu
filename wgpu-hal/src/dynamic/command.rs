@@ -200,6 +200,7 @@ pub trait DynCommandEncoder: DynResource + core::fmt::Debug {
         ray_generation_group_data: crate::PipelineGroupData<dyn DynBuffer>,
         miss_group_data: crate::PipelineGroupData<dyn DynBuffer>,
         intersection_group_data: crate::PipelineGroupData<dyn DynBuffer>,
+        callable_group_data: crate::PipelineGroupData<dyn DynBuffer>,
     );
 
     unsafe fn trace_rays_indirect(
@@ -207,6 +208,7 @@ pub trait DynCommandEncoder: DynResource + core::fmt::Debug {
         ray_generation_group_data: crate::PipelineGroupData<dyn DynBuffer>,
         miss_group_data: crate::PipelineGroupData<dyn DynBuffer>,
         intersection_group_data: crate::PipelineGroupData<dyn DynBuffer>,
+        callable_group_data: crate::PipelineGroupData<dyn DynBuffer>,
         buffer: &dyn DynBuffer,
         offset: wgt::BufferAddress,
     );
@@ -696,6 +698,7 @@ impl<C: CommandEncoder + DynResource> DynCommandEncoder for C {
         ray_generation_group_data: crate::PipelineGroupData<'a, dyn DynBuffer>,
         miss_group_data: crate::PipelineGroupData<'a, dyn DynBuffer>,
         intersection_group_data: crate::PipelineGroupData<'a, dyn DynBuffer>,
+        callable_group_data: crate::PipelineGroupData<'a, dyn DynBuffer>,
     ) {
         let downcast_group_data =
             |data: crate::PipelineGroupData<'a, dyn DynBuffer>| crate::PipelineGroupData {
@@ -712,6 +715,7 @@ impl<C: CommandEncoder + DynResource> DynCommandEncoder for C {
                 downcast_group_data(ray_generation_group_data),
                 downcast_group_data(miss_group_data),
                 downcast_group_data(intersection_group_data),
+                downcast_group_data(callable_group_data),
             );
         }
     }
@@ -721,6 +725,7 @@ impl<C: CommandEncoder + DynResource> DynCommandEncoder for C {
         ray_generation_group_data: crate::PipelineGroupData<'a, dyn DynBuffer>,
         miss_group_data: crate::PipelineGroupData<'a, dyn DynBuffer>,
         intersection_group_data: crate::PipelineGroupData<'a, dyn DynBuffer>,
+        callable_group_data: crate::PipelineGroupData<'a, dyn DynBuffer>,
         buffer: &'a dyn DynBuffer,
         offset: wgt::BufferAddress,
     ) {
@@ -738,6 +743,7 @@ impl<C: CommandEncoder + DynResource> DynCommandEncoder for C {
                 downcast_group_data(ray_generation_group_data),
                 downcast_group_data(miss_group_data),
                 downcast_group_data(intersection_group_data),
+                downcast_group_data(callable_group_data),
                 buffer.expect_downcast_ref(),
                 offset,
             );

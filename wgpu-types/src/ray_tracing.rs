@@ -24,6 +24,39 @@ pub struct BlasTriangleGeometrySizeDescriptor {
     pub index_count: Option<u32>,
     /// Flags for the geometry.
     pub flags: AccelerationStructureGeometryFlags,
+    /// The micro-triangles of the geometry's opacity micromap, by subdivision level and
+    /// format: none for a geometry without one. These bound both the micromap's own triangles
+    /// and the geometry's triangles that use them, at every build.
+    ///
+    /// Requires [`Features::EXPERIMENTAL_RAY_TRACING_OPACITY_MICROMAP`].
+    ///
+    /// [`Features::EXPERIMENTAL_RAY_TRACING_OPACITY_MICROMAP`]: crate::Features::EXPERIMENTAL_RAY_TRACING_OPACITY_MICROMAP
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub opacity_micromap: Vec<OpacityMicromapUsage>,
+}
+
+/// How many triangles of an opacity micromap are at one subdivision level, in one format.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct OpacityMicromapUsage {
+    /// How many triangles.
+    pub count: u32,
+    /// Their subdivision level: each is split into `4^level` micro-triangles, at most 12.
+    pub subdivision_level: u32,
+    /// How each micro-triangle's opacity is kept.
+    pub format: OpacityMicromapFormat,
+}
+
+/// How an opacity micromap keeps a micro-triangle's opacity.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub enum OpacityMicromapFormat {
+    /// One bit: 0 transparent, 1 opaque.
+    TwoState = 1,
+    /// Two bits: 0 transparent, 1 opaque, 2 unknown and transparent, 3 unknown and opaque.
+    /// Unknown micro-triangles are hit as non-opaque geometry is, unless a 2-state force says
+    /// otherwise.
+    FourState = 2,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -150,6 +183,15 @@ bitflags::bitflags!(
         const USE_TRANSFORM = 1 << 5;
         /// Allow retrieval of the vertices of the triangle hit by a ray.
         const ALLOW_RAY_HIT_VERTEX_RETURN = 1 << 6;
+        /// The structure moves over a ray's time: a bottom level one's triangles go from
+        /// their vertices to their end vertices, a top level one's instances from their
+        /// transforms to their end transforms. Rays traced at a time between 0 and 1 meet
+        /// them where they are at that time.
+        ///
+        /// Requires [`Features::EXPERIMENTAL_RAY_TRACING_MOTION_BLUR`].
+        ///
+        /// [`Features::EXPERIMENTAL_RAY_TRACING_MOTION_BLUR`]: crate::Features::EXPERIMENTAL_RAY_TRACING_MOTION_BLUR
+        const ALLOW_MOTION = 1 << 7;
     }
 );
 
@@ -170,6 +212,32 @@ bitflags::bitflags!(
         /// (especially in AABBs like a sphere), if this flag in present only one hit on a primitive may
         /// invoke an any-hit shader.
         const NO_DUPLICATE_ANY_HIT_INVOCATION = 1 << 1;
+    }
+);
+
+bitflags::bitflags!(
+    /// How rays treat an instance of a top level acceleration structure.
+    #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+    #[cfg_attr(feature = "serde", serde(transparent))]
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+    pub struct TlasInstanceFlags: u8 {
+        /// No face of the instance's triangles is culled, whatever the ray's
+        /// flags ask.
+        const TRIANGLE_CULL_DISABLE = 1 << 0;
+        /// The instance's triangles face the other way: front where they
+        /// would be back facing.
+        const TRIANGLE_FLIP_FACING = 1 << 1;
+        /// Every geometry of the instance is opaque, whatever its own flags.
+        /// Rays' flags still override this.
+        const FORCE_OPAQUE = 1 << 2;
+        /// No geometry of the instance is opaque, whatever its own flags.
+        /// Rays' flags still override this.
+        const FORCE_NO_OPAQUE = 1 << 3;
+        /// The instance's opacity micromaps' unknown micro-triangles are what they lean to:
+        /// transparent or opaque, never non-opaque.
+        const FORCE_OPACITY_MICROMAP_2_STATE = 1 << 4;
+        /// The instance's opacity micromaps are not looked at.
+        const DISABLE_OPACITY_MICROMAPS = 1 << 5;
     }
 );
 

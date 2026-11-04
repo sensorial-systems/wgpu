@@ -644,6 +644,8 @@ struct CommandSignatures {
     draw_indexed: Direct3D12::ID3D12CommandSignature,
     draw_mesh: Option<Direct3D12::ID3D12CommandSignature>,
     dispatch: Direct3D12::ID3D12CommandSignature,
+    /// An indirect trace's: a whole `D3D12_DISPATCH_RAYS_DESC`.
+    dispatch_rays: Option<Direct3D12::ID3D12CommandSignature>,
 }
 
 struct DeviceShared {
@@ -1306,7 +1308,18 @@ unsafe impl Send for ComputePipeline {}
 unsafe impl Sync for ComputePipeline {}
 
 #[derive(Debug)]
-pub struct RayTracingPipeline {}
+pub struct RayTracingPipeline {
+    state: Direct3D12::ID3D12StateObject,
+    properties: Direct3D12::ID3D12StateObjectProperties,
+    layout: PipelineLayoutShared,
+    /// Each group's export or hit group name, nul-terminated in UTF-16, as
+    /// the hal numbers groups: ray generation, misses, hit groups and
+    /// callables.
+    group_names: Vec<Vec<u16>>,
+}
+
+unsafe impl Send for RayTracingPipeline {}
+unsafe impl Sync for RayTracingPipeline {}
 
 impl crate::DynRayTracingPipeline for RayTracingPipeline {}
 

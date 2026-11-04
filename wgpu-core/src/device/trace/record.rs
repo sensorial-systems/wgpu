@@ -400,6 +400,10 @@ impl IntoTrace for crate::ray_tracing::OwnedBlasTriangleGeometry<ArcReferences> 
             vertex_stride: self.vertex_stride,
             first_index: self.first_index,
             transform_buffer_offset: self.transform_buffer_offset,
+            end_vertex_buffer: self.end_vertex_buffer.map(|b| b.into_trace()),
+            opacity_micromap: self
+                .opacity_micromap
+                .map(|micromap| micromap.map(|b| b.into_trace())),
         }
     }
 }
@@ -440,6 +444,8 @@ impl IntoTrace for crate::ray_tracing::OwnedTlasInstance<ArcReferences> {
             custom_data: self.custom_data,
             mask: self.mask,
             intersection_index: self.intersection_index,
+            flags: self.flags,
+            end_transform: self.end_transform,
         }
     }
 }
@@ -830,8 +836,21 @@ impl<'a> IntoTrace for crate::ray_tracing_pipeline::RayTracingPipelineDescriptor
                         closest_hit: closest_hit.into_trace(),
                         any_hit: any_hit.map(|a| a.into_trace()),
                     },
+                    crate::ray_tracing_pipeline::RayTracingIntersectionDescriptor::Procedural {
+                        intersection,
+                        closest_hit,
+                        any_hit,
+                    } => {
+                        crate::ray_tracing_pipeline::RayTracingIntersectionDescriptor::Procedural {
+                            intersection: intersection.into_trace(),
+                            closest_hit: closest_hit.map(|c| c.into_trace()),
+                            any_hit: any_hit.map(|a| a.into_trace()),
+                        }
+                    }
                 })
                 .collect(),
+            callables: self.callables.into_iter().map(|c| c.into_trace()).collect(),
+            max_geometry_stride: self.max_geometry_stride,
             cache: self.cache.map(|c| c.into_trace()),
             max_recursion_depth: self.max_recursion_depth,
         }
@@ -1236,8 +1255,19 @@ fn action_to_owned(action: Action<'_, PointerReferences>) -> Action<'static, Poi
                             closest_hit: owned_stage(closest_hit),
                             any_hit: any_hit.map(owned_stage),
                         },
+                        crate::ray_tracing_pipeline::RayTracingIntersectionDescriptor::Procedural {
+                            intersection,
+                            closest_hit,
+                            any_hit,
+                        } => crate::ray_tracing_pipeline::RayTracingIntersectionDescriptor::Procedural {
+                            intersection: owned_stage(intersection),
+                            closest_hit: closest_hit.map(owned_stage),
+                            any_hit: any_hit.map(owned_stage),
+                        },
                     })
                     .collect::<Vec<_>>(),
+                callables: desc.callables.into_iter().map(owned_stage).collect(),
+                max_geometry_stride: desc.max_geometry_stride,
                 max_recursion_depth: desc.max_recursion_depth,
                 cache: desc.cache,
             },

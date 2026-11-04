@@ -305,6 +305,7 @@ fn aabb_geometry_kind_mismatch(ctx: TestingContext) {
         index_format: None,
         index_count: None,
         flags: AccelerationStructureGeometryFlags::OPAQUE,
+        opacity_micromap: Vec::new(),
     };
 
     // AABB BLAS built with triangle geometry
@@ -323,6 +324,8 @@ fn aabb_geometry_kind_mismatch(ctx: TestingContext) {
                 first_index: None,
                 transform_buffer: None,
                 transform_buffer_offset: None,
+                end_vertex_buffer: None,
+                opacity_micromap: None,
             }]),
         }],
         [],

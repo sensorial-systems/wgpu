@@ -2192,6 +2192,11 @@ impl Queue {
                     size: size_info.acceleration_structure_size,
                     format: hal::AccelerationStructureFormat::BottomLevel,
                     allow_compaction: false,
+                    allow_motion: blas
+                        .flags
+                        .contains(AccelerationStructureFlags::ALLOW_MOTION),
+                    max_instances: 0,
+                    opacity_micromaps: &[],
                 })
         }
         .map_err(DeviceError::from_hal)?;

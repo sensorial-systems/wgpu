@@ -28,6 +28,18 @@ pub enum RayTracingPipelineError {
     TooHighRayRecursionDepth(u32, u32),
     #[error("A ray tracing pipeline needs at least one miss stage")]
     NoMissStage,
+    #[error("The number of callable stages {0} is greater than 2^24")]
+    TooManyCallables(usize),
+    #[error("The greatest geometry stride {0} is greater than 2^24")]
+    TooHighGeometryStride(u32),
+    #[error("Hit group {0}'s {1:?} stage reads a hit attribute of another type than its intersection stage writes")]
+    HitAttributeMismatch(usize, naga::ShaderStage),
+    #[error("Hit group {0}'s {1:?} stage reads a `ray_hit_attribute` variable, which only a procedural hit group has")]
+    HitAttributeOfTriangles(usize, naga::ShaderStage),
+    #[error(
+        "Hit group {0}'s {1:?} stage reads `hit_barycentrics`, which only a triangle hit group has"
+    )]
+    BarycentricsOfProcedural(usize, naga::ShaderStage),
 }
 
 impl WebGpuError for RayTracingPipelineError {
@@ -35,7 +47,12 @@ impl WebGpuError for RayTracingPipelineError {
         match self {
             Self::TooManyIntersectionGroups(..)
             | Self::TooHighRayRecursionDepth(..)
-            | Self::NoMissStage => ErrorType::Validation,
+            | Self::NoMissStage
+            | Self::TooManyCallables(..)
+            | Self::TooHighGeometryStride(..)
+            | Self::HitAttributeMismatch(..)
+            | Self::HitAttributeOfTriangles(..)
+            | Self::BarycentricsOfProcedural(..) => ErrorType::Validation,
         }
     }
 }
@@ -45,6 +62,13 @@ impl WebGpuError for RayTracingPipelineError {
 pub enum RayTracingIntersectionDescriptor<'a, SM = Arc<ShaderModule>> {
     Triangle {
         closest_hit: ProgrammableStageDescriptor<'a, SM>,
+        any_hit: Option<ProgrammableStageDescriptor<'a, SM>>,
+    },
+    /// A hit group for axis-aligned bounding box geometry, whose
+    /// intersection stage reports the hits on its procedural primitives.
+    Procedural {
+        intersection: ProgrammableStageDescriptor<'a, SM>,
+        closest_hit: Option<ProgrammableStageDescriptor<'a, SM>>,
         any_hit: Option<ProgrammableStageDescriptor<'a, SM>>,
     },
 }
@@ -68,6 +92,10 @@ pub struct RayTracingPipelineDescriptor<
     pub misses: Vec<ProgrammableStageDescriptor<'a, SM>>,
     /// All the descriptors for intersection functions
     pub intersections: Vec<RayTracingIntersectionDescriptor<'a, SM>>,
+    /// The callable stages, which `executeCallable` runs by index.
+    pub callables: Vec<ProgrammableStageDescriptor<'a, SM>>,
+    /// The greatest geometry stride a trace may give.
+    pub max_geometry_stride: u32,
     /// The maximum amount entry points are allowed to recurse
     pub max_recursion_depth: u32,
     /// The pipeline cache to use when creating this pipeline.
@@ -99,18 +127,22 @@ pub struct ShaderBindingData {
     /// as many less one empty ones, which a trace's hit group offset --
     /// clamped below the number of groups -- can reach past the last.
     pub(crate) intersection_records: u32,
+    pub(crate) num_callables: u32,
+    pub(crate) callable_offset: wgt::BufferAddress,
 }
 
 impl ShaderBindingData {
-    /// Panics if `num_misses` or `num_intersection_groups` is above u32::MAX
+    /// Panics if `num_misses`, `num_intersection_groups` or `num_callables` is above u32::MAX
     pub(crate) fn from_raw_pipeline(
         device: Arc<Device>,
         pipeline: &dyn hal::DynRayTracingPipeline,
         num_misses: usize,
         num_intersection_groups: usize,
+        num_callables: usize,
     ) -> Result<Arc<Self>, CreatePipelineError> {
         let num_misses = u32::try_from(num_misses).unwrap();
         let num_intersection_groups = u32::try_from(num_intersection_groups).unwrap();
+        let num_callables = u32::try_from(num_callables).unwrap();
         let mut base_data = Vec::new();
 
         let ray_generation_data = unsafe {
@@ -166,6 +198,21 @@ impl ShaderBindingData {
             );
         }
 
+        let callable_offset = (base_data.len() as wgt::BufferAddress).next_multiple_of(
+            device.alignments.ray_tracing_pipeline_data_offset_alignment as wgt::BufferAddress,
+        );
+        if num_callables != 0 {
+            base_data.resize(callable_offset as _, 0);
+            let first = 1 + num_misses + num_intersection_groups;
+            let callable_data = unsafe {
+                device
+                    .raw()
+                    .get_raytracing_pipeline_group_data(pipeline, first..(first + num_callables))
+            }
+            .map_err(|e| CreatePipelineError::Device(device.handle_hal_error(e)))?;
+            base_data.extend_from_slice(&callable_data);
+        }
+
         // Don't need the exact allocated size as it will be grater than this.
         let (buffer, _) = unsafe {
             device.raw().create_buffer(&BufferDescriptor {
@@ -185,6 +232,8 @@ impl ShaderBindingData {
             miss_offset: padded_miss_offset,
             intersection_offset: padded_intersection_offset,
             intersection_records,
+            num_callables,
+            callable_offset,
         });
 
         // If there is no queue anymore, the ray tracing pipeline can't be accessed, so we don't have to worry about UB from uninitialized values
@@ -264,6 +313,7 @@ pub(crate) struct RayTracingPipelineState {
     pub(crate) shader_binding_data: Arc<ShaderBindingData>,
     pub(crate) _shader_modules: Vec<Arc<ShaderModule>>,
     pub(crate) intersection_types: Arc<[RayTracingIntersectionType]>,
+    pub(crate) max_geometry_stride: u32,
 }
 
 #[derive(Debug)]
@@ -356,6 +406,14 @@ impl RayTracingPipeline {
             return Err(InvalidResourceError(self.error_ident()));
         };
         Ok(&state.intersection_types)
+    }
+
+    /// The greatest geometry stride the pipeline's traces may give.
+    pub(crate) fn max_geometry_stride(&self) -> Result<u32, InvalidResourceError> {
+        let ResourceState::Valid(state) = &self.state else {
+            return Err(InvalidResourceError(self.error_ident()));
+        };
+        Ok(state.max_geometry_stride)
     }
 
     pub fn get_bind_group_layout_inner(

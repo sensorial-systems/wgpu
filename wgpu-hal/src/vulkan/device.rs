@@ -1,4 +1,6 @@
-use alloc::{borrow::ToOwned as _, collections::BTreeMap, ffi::CString, sync::Arc, vec::Vec};
+use alloc::{
+    borrow::ToOwned as _, boxed::Box, collections::BTreeMap, ffi::CString, sync::Arc, vec::Vec,
+};
 use core::{
     ffi::CStr,
     mem::{self, MaybeUninit},
@@ -1036,6 +1038,14 @@ impl crate::Device for super::Device {
             && self.shared.extension_fns.ray_tracing_pipelines.is_some()
         {
             usage |= vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS;
+        }
+        // A bottom level structure's inputs may be its micromaps'.
+        if desc
+            .usage
+            .contains(wgt::BufferUses::BOTTOM_LEVEL_ACCELERATION_STRUCTURE_INPUT)
+            && self.shared.extension_fns.opacity_micromap.is_some()
+        {
+            usage |= vk::BufferUsageFlags::MICROMAP_BUILD_INPUT_READ_ONLY_EXT;
         }
         let vk_info = vk::BufferCreateInfo::default()
             .size(desc.size)
@@ -2485,6 +2495,8 @@ impl crate::Device for super::Device {
         let counts = Some(naga::back::spv::RayTracingPipelineGroups {
             hit_groups: desc.intersection.len() as u32,
             misses: desc.misses.len() as u32,
+            max_geometry_stride: desc.max_geometry_stride,
+            callables: desc.callables.len() as u32,
         });
 
         let compiled_ray_gen = self.compile_ray_tracing_stage(
@@ -2532,26 +2544,45 @@ impl crate::Device for super::Device {
         }
 
         for group in desc.intersection {
-            let compiled_closest_hits = self.compile_ray_tracing_stage(
-                &group.closest_hit,
-                naga::ShaderStage::ClosestHit,
-                &desc.layout.binding_map,
-                counts,
-            )?;
-
-            let closest_idx = stages.len();
-
-            stages.push(compiled_closest_hits.create_info);
-
-            compiled_stages.push(compiled_closest_hits);
-
             let mut raw_hit: vk::RayTracingShaderGroupCreateInfoKHR<'_> =
                 vk::RayTracingShaderGroupCreateInfoKHR::default()
-                    .closest_hit_shader(closest_idx as _)
+                    .closest_hit_shader(vk::SHADER_UNUSED_KHR)
                     .any_hit_shader(vk::SHADER_UNUSED_KHR)
                     .intersection_shader(vk::SHADER_UNUSED_KHR)
                     .general_shader(vk::SHADER_UNUSED_KHR)
                     .ty(vk::RayTracingShaderGroupTypeKHR::TRIANGLES_HIT_GROUP);
+
+            if let Some(closest_hit) = &group.closest_hit {
+                let compiled_closest_hit = self.compile_ray_tracing_stage(
+                    closest_hit,
+                    naga::ShaderStage::ClosestHit,
+                    &desc.layout.binding_map,
+                    counts,
+                )?;
+
+                raw_hit = raw_hit.closest_hit_shader(stages.len() as _);
+
+                stages.push(compiled_closest_hit.create_info);
+
+                compiled_stages.push(compiled_closest_hit);
+            }
+
+            if let Some(intersection) = &group.intersection {
+                let compiled_intersection = self.compile_ray_tracing_stage(
+                    intersection,
+                    naga::ShaderStage::Intersection,
+                    &desc.layout.binding_map,
+                    counts,
+                )?;
+
+                raw_hit = raw_hit
+                    .intersection_shader(stages.len() as _)
+                    .ty(vk::RayTracingShaderGroupTypeKHR::PROCEDURAL_HIT_GROUP);
+
+                stages.push(compiled_intersection.create_info);
+
+                compiled_stages.push(compiled_intersection);
+            }
 
             if let Some(any_hit) = &group.any_hit {
                 let compiled_any_hit = self.compile_ray_tracing_stage(
@@ -2573,8 +2604,49 @@ impl crate::Device for super::Device {
             groups.push(raw_hit);
         }
 
+        for callable in desc.callables {
+            let compiled_callable = self.compile_ray_tracing_stage(
+                callable,
+                naga::ShaderStage::Callable,
+                &desc.layout.binding_map,
+                counts,
+            )?;
+
+            groups.push(
+                vk::RayTracingShaderGroupCreateInfoKHR::default()
+                    .closest_hit_shader(vk::SHADER_UNUSED_KHR)
+                    .any_hit_shader(vk::SHADER_UNUSED_KHR)
+                    .intersection_shader(vk::SHADER_UNUSED_KHR)
+                    .general_shader(stages.len() as _)
+                    .ty(vk::RayTracingShaderGroupTypeKHR::GENERAL),
+            );
+
+            stages.push(compiled_callable.create_info);
+
+            compiled_stages.push(compiled_callable);
+        }
+
+        // A pipeline may trace through structures that move only if it was
+        // made to: every pipeline is, on a device that can.
+        let flags = match self
+            .shared
+            .features
+            .contains(wgt::Features::EXPERIMENTAL_RAY_TRACING_MOTION_BLUR)
+        {
+            true => vk::PipelineCreateFlags::RAY_TRACING_ALLOW_MOTION_NV,
+            false => vk::PipelineCreateFlags::empty(),
+        };
+        let flags = match self
+            .shared
+            .features
+            .contains(wgt::Features::EXPERIMENTAL_RAY_TRACING_OPACITY_MICROMAP)
+        {
+            true => flags | vk::PipelineCreateFlags::RAY_TRACING_OPACITY_MICROMAP_EXT,
+            false => flags,
+        };
         let create_infos = [{
             vk::RayTracingPipelineCreateInfoKHR::default()
+                .flags(flags)
                 .layout(desc.layout.raw)
                 .max_pipeline_ray_recursion_depth(desc.max_recursion_depth)
                 .stages(&stages)
@@ -2840,6 +2912,18 @@ impl crate::Device for super::Device {
             .as_ref()
             .expect("Feature `RAY_TRACING` not enabled");
 
+        // The end vertices of triangles that move, and the opacity micromaps'
+        // usage, chained to their triangles: boxed, so that they stay where
+        // the chain points.
+        let mut motion_storage =
+            Vec::<Box<vk::AccelerationStructureGeometryMotionTrianglesDataNV>>::new();
+        let mut micromap_storage = Vec::<(
+            Box<vk::AccelerationStructureTrianglesOpacityMicromapEXT>,
+            Vec<vk::MicromapUsageEXT>,
+        )>::new();
+        // Their micromaps' builds come first, in the structure's scratch.
+        let mut micromap_scratch = 0;
+
         let (geometries, primitive_counts) = match *desc.entries {
             crate::AccelerationStructureEntries::Instances(ref instances) => {
                 let instance_data = vk::AccelerationStructureGeometryInstancesDataKHR::default();
@@ -2910,6 +2994,33 @@ impl crate::Device for super::Device {
                         triangles.vertex_count / 3
                     };
 
+                    if triangles.end_vertex_buffer.is_some() {
+                        let motion = Box::new(
+                            vk::AccelerationStructureGeometryMotionTrianglesDataNV::default(),
+                        );
+                        triangle_data.p_next = <*const _>::cast(&*motion);
+                        motion_storage.push(motion);
+                    }
+                    if let Some(ref micromap) = triangles.opacity_micromap {
+                        let usage = super::micromap_usage(micromap.usage);
+                        let mut chained = Box::new(
+                            vk::AccelerationStructureTrianglesOpacityMicromapEXT::default()
+                                .index_type(match micromap.indices {
+                                    Some(_) => vk::IndexType::UINT32,
+                                    None => vk::IndexType::NONE_KHR,
+                                }),
+                        );
+                        chained.usage_counts_count = usage.len() as u32;
+                        chained.p_usage_counts = usage.as_ptr();
+                        chained.p_next = triangle_data.p_next.cast_mut();
+                        triangle_data.p_next = <*const _>::cast(&*chained);
+                        micromap_scratch += self
+                            .micromap_build_sizes(micromap.usage)
+                            .build_scratch_size
+                            .next_multiple_of(super::MICROMAP_SCRATCH_ALIGNMENT);
+                        micromap_storage.push((chained, usage));
+                    }
+
                     let geometry = vk::AccelerationStructureGeometryKHR::default()
                         .geometry_type(vk::GeometryTypeKHR::TRIANGLES)
                         .geometry(vk::AccelerationStructureGeometryDataKHR {
@@ -2953,9 +3064,13 @@ impl crate::Device for super::Device {
             _ => vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
         };
 
+        let mut flags = conv::map_acceleration_structure_flags(desc.flags);
+        if !micromap_storage.is_empty() {
+            flags |= vk::BuildAccelerationStructureFlagsKHR::ALLOW_DISABLE_OPACITY_MICROMAPS_EXT;
+        }
         let geometry_info = vk::AccelerationStructureBuildGeometryInfoKHR::default()
             .ty(ty)
-            .flags(conv::map_acceleration_structure_flags(desc.flags))
+            .flags(flags)
             .geometries(&geometries);
 
         let mut raw = Default::default();
@@ -2970,10 +3085,13 @@ impl crate::Device for super::Device {
                 )
         }
 
+        drop(motion_storage);
+        drop(micromap_storage);
+
         crate::AccelerationStructureBuildSizes {
             acceleration_structure_size: raw.acceleration_structure_size,
             update_scratch_size: raw.update_scratch_size,
-            build_scratch_size: raw.build_scratch_size,
+            build_scratch_size: raw.build_scratch_size.max(micromap_scratch),
         }
     }
 
@@ -3072,11 +3190,21 @@ impl crate::Device for super::Device {
                 self.shared.set_object_name(raw_buffer, label);
             }
 
-            let vk_info = vk::AccelerationStructureCreateInfoKHR::default()
+            let mut vk_info = vk::AccelerationStructureCreateInfoKHR::default()
                 .buffer(raw_buffer)
                 .offset(0)
                 .size(desc.size)
                 .ty(conv::map_acceleration_structure_format(desc.format));
+            // A top level structure that moves says how many instances it
+            // holds.
+            let mut motion_info =
+                vk::AccelerationStructureMotionInfoNV::default().max_instances(desc.max_instances);
+            if desc.allow_motion {
+                vk_info = vk_info.create_flags(vk::AccelerationStructureCreateFlagsKHR::MOTION_NV);
+                if desc.format == crate::AccelerationStructureFormat::TopLevel {
+                    vk_info = vk_info.push_next(&mut motion_info);
+                }
+            }
 
             let raw_acceleration_structure = ray_tracing_functions
                 .acceleration_structure
@@ -3112,11 +3240,17 @@ impl crate::Device for super::Device {
                 None
             };
 
+            let mut micromaps = Vec::with_capacity(desc.opacity_micromaps.len());
+            for usage in desc.opacity_micromaps {
+                micromaps.push(self.create_micromap(desc.label, usage)?);
+            }
+
             Ok(super::AccelerationStructure {
                 raw: raw_acceleration_structure,
                 buffer: raw_buffer,
                 allocation,
                 compacted_size_query: pool,
+                micromaps,
             })
         }
     }
@@ -3146,6 +3280,9 @@ impl crate::Device for super::Device {
             if let Some(query) = acceleration_structure.compacted_size_query {
                 self.shared.raw.destroy_query_pool(query, None)
             }
+            for micromap in acceleration_structure.micromaps {
+                self.destroy_micromap(micromap);
+            }
         }
     }
 
@@ -3163,16 +3300,36 @@ impl crate::Device for super::Device {
 
     fn tlas_instance_to_bytes(&self, instance: TlasInstance, to_extend: &mut Vec<u8>) {
         const MAX_U24: u32 = (1u32 << 24u32) - 1u32;
-        let temp = RawTlasInstance {
-            transform: instance.transform,
-            custom_data_and_mask: (instance.custom_data & MAX_U24)
-                | (u32::from(instance.mask) << 24),
-            shader_binding_table_record_offset_and_flags: (instance
-                .pipeline_intersection_data_offset
-                & MAX_U24),
-            acceleration_structure_reference: instance.blas_address,
-        };
-        to_extend.extend_from_slice(bytemuck::bytes_of(&temp))
+        let custom_data_and_mask =
+            (instance.custom_data & MAX_U24) | (u32::from(instance.mask) << 24);
+        let shader_binding_table_record_offset_and_flags =
+            (instance.pipeline_intersection_data_offset & MAX_U24)
+                | (u32::from(instance.flags.bits()) << 24);
+        match instance.end_transform {
+            Some(end_transform) => {
+                let temp = super::RawTlasMotionInstance {
+                    ty: vk::AccelerationStructureMotionInstanceTypeNV::MATRIX_MOTION.as_raw()
+                        as u32,
+                    flags: 0,
+                    transform_t0: instance.transform,
+                    transform_t1: end_transform,
+                    custom_data_and_mask,
+                    shader_binding_table_record_offset_and_flags,
+                    acceleration_structure_reference: instance.blas_address,
+                    padding: [0; 10],
+                };
+                to_extend.extend_from_slice(bytemuck::bytes_of(&temp))
+            }
+            None => {
+                let temp = RawTlasInstance {
+                    transform: instance.transform,
+                    custom_data_and_mask,
+                    shader_binding_table_record_offset_and_flags,
+                    acceleration_structure_reference: instance.blas_address,
+                };
+                to_extend.extend_from_slice(bytemuck::bytes_of(&temp))
+            }
+        }
     }
 
     fn check_if_oom(&self) -> Result<(), crate::DeviceError> {
@@ -3296,4 +3453,108 @@ impl super::DeviceShared {
 struct ImageWithoutMemory {
     raw: vk::Image,
     requirements: vk::MemoryRequirements,
+}
+
+impl super::Device {
+    fn micromap_functions(&self) -> &ext::opacity_micromap::Device {
+        self.shared
+            .extension_fns
+            .opacity_micromap
+            .as_ref()
+            .expect("Feature `EXPERIMENTAL_RAY_TRACING_OPACITY_MICROMAP` not enabled")
+    }
+
+    /// The sizes of an opacity micromap of `usage`.
+    fn micromap_build_sizes(
+        &self,
+        usage: &[wgt::OpacityMicromapUsage],
+    ) -> vk::MicromapBuildSizesInfoEXT<'static> {
+        let counts = super::micromap_usage(usage);
+        let mut info = vk::MicromapBuildInfoEXT::default()
+            .ty(vk::MicromapTypeEXT::OPACITY_MICROMAP)
+            .flags(vk::BuildMicromapFlagsEXT::PREFER_FAST_TRACE)
+            .mode(vk::BuildMicromapModeEXT::BUILD);
+        info.usage_counts_count = counts.len() as u32;
+        info.p_usage_counts = counts.as_ptr();
+        let mut sizes = vk::MicromapBuildSizesInfoEXT::default();
+        let functions = self.micromap_functions();
+        unsafe {
+            (functions.fp().get_micromap_build_sizes_ext)(
+                functions.device(),
+                vk::AccelerationStructureBuildTypeKHR::DEVICE,
+                &info,
+                &mut sizes,
+            )
+        };
+        sizes
+    }
+
+    /// An opacity micromap of `usage`, in memory of its own.
+    unsafe fn create_micromap(
+        &self,
+        label: crate::Label,
+        usage: &[wgt::OpacityMicromapUsage],
+    ) -> Result<super::Micromap, crate::DeviceError> {
+        let sizes = self.micromap_build_sizes(usage);
+        let vk_buffer_info = vk::BufferCreateInfo::default()
+            .size(sizes.micromap_size.max(1))
+            .usage(
+                vk::BufferUsageFlags::MICROMAP_STORAGE_EXT
+                    | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
+            )
+            .sharing_mode(vk::SharingMode::EXCLUSIVE);
+        unsafe {
+            let raw_buffer = self
+                .shared
+                .raw
+                .create_buffer(&vk_buffer_info, None)
+                .map_err(super::map_host_device_oom_and_ioca_err)?;
+            let requirements = self.shared.raw.get_buffer_memory_requirements(raw_buffer);
+            let allocation = self
+                .mem_allocator
+                .allocate(
+                    super::MemoryPool::General,
+                    &gpu_allocator::vulkan::AllocationCreateDesc {
+                        name: label.unwrap_or("Unlabeled opacity micromap"),
+                        requirements,
+                        location: gpu_allocator::MemoryLocation::GpuOnly,
+                        linear: true,
+                        allocation_scheme:
+                            gpu_allocator::vulkan::AllocationScheme::GpuAllocatorManaged,
+                    },
+                )
+                .inspect_err(|_| self.shared.raw.destroy_buffer(raw_buffer, None))?;
+            self.shared
+                .raw
+                .bind_buffer_memory(raw_buffer, allocation.memory(), allocation.offset())
+                .map_err(super::map_host_device_oom_and_ioca_err)?;
+            let info = vk::MicromapCreateInfoEXT::default()
+                .buffer(raw_buffer)
+                .offset(0)
+                .size(sizes.micromap_size)
+                .ty(vk::MicromapTypeEXT::OPACITY_MICROMAP);
+            let functions = self.micromap_functions();
+            let mut raw = vk::MicromapEXT::null();
+            (functions.fp().create_micromap_ext)(functions.device(), &info, ptr::null(), &mut raw)
+                .result()
+                .map_err(super::map_host_device_oom_and_ioca_err)?;
+            Ok(super::Micromap {
+                raw,
+                buffer: raw_buffer,
+                allocation,
+                scratch_size: sizes.build_scratch_size,
+            })
+        }
+    }
+
+    unsafe fn destroy_micromap(&self, micromap: super::Micromap) {
+        let functions = self.micromap_functions();
+        unsafe {
+            (functions.fp().destroy_micromap_ext)(functions.device(), micromap.raw, ptr::null());
+            self.shared.raw.destroy_buffer(micromap.buffer, None);
+        }
+        if let Err(err) = self.mem_allocator.free(micromap.allocation) {
+            log::warn!("Failed to free opacity micromap: {err}");
+        }
+    }
 }

@@ -30,6 +30,14 @@ static_assertions::assert_impl_all!(AccelerationStructureFlags: Send, Sync);
 /// Flags for a geometry inside a bottom level acceleration structure.
 pub type AccelerationStructureGeometryFlags = wgt::AccelerationStructureGeometryFlags;
 static_assertions::assert_impl_all!(AccelerationStructureGeometryFlags: Send, Sync);
+/// How rays treat an instance of a top level acceleration structure.
+pub type TlasInstanceFlags = wgt::TlasInstanceFlags;
+static_assertions::assert_impl_all!(TlasInstanceFlags: Send, Sync);
+
+/// How many triangles of an opacity micromap are at one subdivision level, in one format.
+pub type OpacityMicromapUsage = wgt::OpacityMicromapUsage;
+/// How an opacity micromap keeps a micro-triangle's opacity.
+pub type OpacityMicromapFormat = wgt::OpacityMicromapFormat;
 
 /// Update mode for acceleration structure builds.
 pub type AccelerationStructureUpdateMode = wgt::AccelerationStructureUpdateMode;
@@ -72,6 +80,17 @@ pub struct TlasInstance {
     ///
     /// [`Features::EXPERIMENTAL_RAY_TRACING_PIPELINES`]: wgt::Features::EXPERIMENTAL_RAY_TRACING_PIPELINES
     pub intersection_index: u32,
+    /// How rays treat the instance: its triangles' culling and facing, and
+    /// its geometries' opacity. Empty from [`TlasInstance::new`].
+    pub flags: TlasInstanceFlags,
+    /// In a [`Tlas`] that moves, built with [`AccelerationStructureFlags::ALLOW_MOTION`], the
+    /// transform the instance ends at: rays traced at a time between 0 and 1 meet the
+    /// instance between `transform` and this. The instance stays at `transform` without
+    /// one. Not in a [`Tlas`] that does not move. `None` from [`TlasInstance::new`].
+    ///
+    /// [`Tlas`]: crate::Tlas
+    /// [`AccelerationStructureFlags::ALLOW_MOTION`]: wgt::AccelerationStructureFlags::ALLOW_MOTION
+    pub end_transform: Option<[f32; 12]>,
 }
 
 impl TlasInstance {
@@ -100,6 +119,8 @@ impl TlasInstance {
             custom_data,
             mask,
             intersection_index,
+            flags: TlasInstanceFlags::empty(),
+            end_transform: None,
         }
     }
 
@@ -142,8 +163,45 @@ pub struct BlasTriangleGeometry<'a> {
     pub transform_buffer: Option<&'a Buffer>,
     /// Transform buffer offset in bytes (optional, required if transform buffer is present).
     pub transform_buffer_offset: Option<wgt::BufferAddress>,
+    /// In a [`Blas`] that moves, built with [`AccelerationStructureFlags::ALLOW_MOTION`], the
+    /// vertices the triangles end at, laid out as the vertex buffer's are from `first_vertex`
+    /// on: rays traced at a time between 0 and 1 meet the triangles between the two.
+    /// Required in a [`Blas`] that moves, not allowed in one that does not.
+    ///
+    /// [`AccelerationStructureFlags::ALLOW_MOTION`]: wgt::AccelerationStructureFlags::ALLOW_MOTION
+    pub end_vertex_buffer: Option<&'a Buffer>,
+    /// The triangles' opacity micromap: required where the geometry's size descriptor has
+    /// [`opacity_micromap`](wgt::BlasTriangleGeometrySizeDescriptor::opacity_micromap) usage,
+    /// not allowed where it has none.
+    pub opacity_micromap: Option<BlasOpacityMicromap<'a>>,
 }
 static_assertions::assert_impl_all!(BlasTriangleGeometry<'_>: WasmNotSendSync);
+
+/// An opacity micromap of a [`BlasTriangleGeometry`]: each of its triangles split into
+/// `4^subdivision_level` micro-triangles, transparent, opaque, or unknown, which rays pass through,
+/// hit as opaque geometry, or hit as non-opaque geometry. Built into the [`Blas`] with it, from
+/// buffers with [`BufferUsages::BLAS_INPUT`](crate::BufferUsages::BLAS_INPUT).
+#[derive(Clone, Copy, Debug)]
+pub struct BlasOpacityMicromap<'a> {
+    /// The micro-triangles' states: one bit each in the
+    /// [`TwoState`](wgt::OpacityMicromapFormat::TwoState) format, two in the
+    /// [`FourState`](wgt::OpacityMicromapFormat::FourState) one, packed from each byte's least
+    /// significant bit, in the order of the micromap's space-filling curve.
+    pub data: &'a Buffer,
+    /// Where the states start in `data`, in bytes.
+    pub data_offset: wgt::BufferAddress,
+    /// The micromap's triangles, 8 bytes each, as many as the usage counts: the byte offset of
+    /// the triangle's states from `data_offset` (`u32`), its subdivision level (`u16`), its
+    /// format (`u16`, 1 two-state, 2 four-state).
+    pub triangles: &'a Buffer,
+    /// Where the triangles start in `triangles`, in bytes.
+    pub triangles_offset: wgt::BufferAddress,
+    /// Which micromap triangle each of the geometry's triangles uses, an `i32`, or a special
+    /// index: -1 transparent, -2 opaque, -3 unknown and transparent, -4 unknown and opaque.
+    /// Without them, triangle `i` uses micromap triangle `i`. The buffer and the offset of
+    /// the first index in bytes.
+    pub indices: Option<(&'a Buffer, wgt::BufferAddress)>,
+}
 
 /// Definition for an axis-aligned bounding box geometry group for a bottom level acceleration structure.
 ///

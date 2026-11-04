@@ -412,6 +412,8 @@ pub(crate) struct PerStageBindingTypeCounter {
     miss: Saturating<u32>,
     any_hit: Saturating<u32>,
     closest_hit: Saturating<u32>,
+    intersection: Saturating<u32>,
+    callable: Saturating<u32>,
 }
 
 impl PerStageBindingTypeCounter {
@@ -437,14 +439,24 @@ impl PerStageBindingTypeCounter {
         if stage.contains(wgt::ShaderStages::CLOSEST_HIT) {
             self.closest_hit += count;
         }
+        if stage.contains(wgt::ShaderStages::INTERSECTION) {
+            self.intersection += count;
+        }
+        if stage.contains(wgt::ShaderStages::CALLABLE) {
+            self.callable += count;
+        }
     }
 
     pub(crate) fn max(&self) -> (BindingZone, u32) {
         let max_value = self.vertex.max(
             self.fragment.max(
                 self.compute.max(
-                    self.ray_generation
-                        .max(self.miss.max(self.any_hit.max(self.closest_hit))),
+                    self.ray_generation.max(
+                        self.miss.max(
+                            self.any_hit
+                                .max(self.closest_hit.max(self.intersection.max(self.callable))),
+                        ),
+                    ),
                 ),
             ),
         );
@@ -469,6 +481,12 @@ impl PerStageBindingTypeCounter {
         }
         if max_value == self.closest_hit {
             stage |= wgt::ShaderStages::CLOSEST_HIT
+        }
+        if max_value == self.intersection {
+            stage |= wgt::ShaderStages::INTERSECTION
+        }
+        if max_value == self.callable {
+            stage |= wgt::ShaderStages::CALLABLE
         }
         (BindingZone::Stage(stage), max_value.0)
     }

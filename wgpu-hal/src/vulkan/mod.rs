@@ -413,6 +413,7 @@ struct DeviceExtensionFunctions {
     timeline_semaphore: Option<ExtensionFn<khr::timeline_semaphore::Device>>,
     ray_tracing: Option<RayTracingDeviceExtensionFunctions>,
     ray_tracing_pipelines: Option<khr::ray_tracing_pipeline::Device>,
+    opacity_micromap: Option<ext::opacity_micromap::Device>,
     mesh_shading: Option<ext::mesh_shader::Device>,
     #[cfg_attr(not(unix), allow(dead_code))]
     external_memory_fd: Option<khr::external_memory_fd::Device>,
@@ -904,6 +905,34 @@ pub struct AccelerationStructure {
     buffer: vk::Buffer,
     allocation: MemoryAllocation,
     compacted_size_query: Option<vk::QueryPool>,
+    /// Its triangle geometries' opacity micromaps, in order.
+    micromaps: Vec<Micromap>,
+}
+
+/// An opacity micromap a bottom level structure keeps for one of its
+/// geometries, built in place at each of the structure's builds.
+#[derive(Debug)]
+struct Micromap {
+    raw: vk::MicromapEXT,
+    buffer: vk::Buffer,
+    allocation: MemoryAllocation,
+    scratch_size: u64,
+}
+
+/// What a micromap's build scratch starts at a multiple of: the strictest
+/// acceleration structure scratch alignment of current devices.
+const MICROMAP_SCRATCH_ALIGNMENT: u64 = 256;
+
+/// `usage` as Vulkan's.
+fn micromap_usage(usage: &[wgt::OpacityMicromapUsage]) -> Vec<vk::MicromapUsageEXT> {
+    usage
+        .iter()
+        .map(|usage| vk::MicromapUsageEXT {
+            count: usage.count,
+            subdivision_level: usage.subdivision_level,
+            format: usage.format as u32,
+        })
+        .collect()
 }
 
 impl crate::DynAccelerationStructure for AccelerationStructure {}
@@ -1869,6 +1898,21 @@ struct RawTlasInstance {
     custom_data_and_mask: u32,
     shader_binding_table_record_offset_and_flags: u32,
     acceleration_structure_reference: u64,
+}
+
+/// A `VkAccelerationStructureMotionInstanceNV` of a matrix motion instance,
+/// in the 160 bytes every instance of a structure that moves takes.
+#[derive(Clone, Copy, Pod, Zeroable)]
+#[repr(C)]
+struct RawTlasMotionInstance {
+    ty: u32,
+    flags: u32,
+    transform_t0: [f32; 12],
+    transform_t1: [f32; 12],
+    custom_data_and_mask: u32,
+    shader_binding_table_record_offset_and_flags: u32,
+    acceleration_structure_reference: u64,
+    padding: [u32; 10],
 }
 
 /// Arguments to the [`CreateDeviceCallback`].

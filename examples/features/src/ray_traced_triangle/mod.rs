@@ -132,6 +132,7 @@ impl crate::framework::Example for Example {
             index_format: Some(IndexFormat::Uint32),
             index_count: Some(indices.len() as u32),
             flags: wgpu::AccelerationStructureGeometryFlags::OPAQUE,
+            opacity_micromap: Vec::new(),
         };
 
         let blas = device.create_blas(
@@ -237,6 +238,8 @@ impl crate::framework::Example for Example {
                     first_index: Some(0),
                     transform_buffer: None,
                     transform_buffer_offset: None,
+                    end_vertex_buffer: None,
+                    opacity_micromap: None,
                 }]),
             }),
             Some(&tlas),

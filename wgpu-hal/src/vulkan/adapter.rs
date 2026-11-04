@@ -1,7 +1,7 @@
 use alloc::{borrow::ToOwned as _, boxed::Box, collections::BTreeMap, sync::Arc, vec::Vec};
 use core::{ffi::CStr, marker::PhantomData};
 
-use ash::{ext, google, khr, vk};
+use ash::{ext, google, khr, nv, vk};
 use wgpu_sync::Mutex;
 
 use crate::{vulkan::semaphore_list::SemaphoreList, AllocationSizes};
@@ -109,6 +109,16 @@ pub struct PhysicalDeviceFeatures {
         Option<vk::PhysicalDeviceZeroInitializeWorkgroupMemoryFeatures<'static>>,
     position_fetch: Option<vk::PhysicalDeviceRayTracingPositionFetchFeaturesKHR<'static>>,
 
+    /// Features provided by `VK_NV_ray_tracing_motion_blur`.
+    ray_tracing_motion_blur: Option<vk::PhysicalDeviceRayTracingMotionBlurFeaturesNV<'static>>,
+
+    /// Features provided by `VK_NV_ray_tracing_invocation_reorder`.
+    ray_tracing_invocation_reorder:
+        Option<vk::PhysicalDeviceRayTracingInvocationReorderFeaturesNV<'static>>,
+
+    /// Features provided by `VK_EXT_opacity_micromap`.
+    opacity_micromap: Option<vk::PhysicalDeviceOpacityMicromapFeaturesEXT<'static>>,
+
     /// Features provided by `VK_KHR_shader_atomic_int64`, promoted to Vulkan 1.2.
     shader_atomic_int64: Option<vk::PhysicalDeviceShaderAtomicInt64Features<'static>>,
 
@@ -202,6 +212,15 @@ impl PhysicalDeviceFeatures {
             info = info.push_next(feature);
         }
         if let Some(ref mut feature) = self.position_fetch {
+            info = info.push_next(feature);
+        }
+        if let Some(ref mut feature) = self.ray_tracing_motion_blur {
+            info = info.push_next(feature);
+        }
+        if let Some(ref mut feature) = self.ray_tracing_invocation_reorder {
+            info = info.push_next(feature);
+        }
+        if let Some(ref mut feature) = self.opacity_micromap {
             info = info.push_next(feature);
         }
         if let Some(ref mut feature) = self.shader_image_atomic_int64 {
@@ -554,6 +573,31 @@ impl PhysicalDeviceFeatures {
                     vk::PhysicalDeviceRayTracingPositionFetchFeaturesKHR::default()
                         .ray_tracing_position_fetch(true),
                 )
+            } else {
+                None
+            },
+            ray_tracing_motion_blur: if enabled_extensions
+                .contains(&nv::ray_tracing_motion_blur::NAME)
+            {
+                Some(
+                    vk::PhysicalDeviceRayTracingMotionBlurFeaturesNV::default()
+                        .ray_tracing_motion_blur(true),
+                )
+            } else {
+                None
+            },
+            ray_tracing_invocation_reorder: if enabled_extensions
+                .contains(&nv::ray_tracing_invocation_reorder::NAME)
+            {
+                Some(
+                    vk::PhysicalDeviceRayTracingInvocationReorderFeaturesNV::default()
+                        .ray_tracing_invocation_reorder(true),
+                )
+            } else {
+                None
+            },
+            opacity_micromap: if enabled_extensions.contains(&ext::opacity_micromap::NAME) {
+                Some(vk::PhysicalDeviceOpacityMicromapFeaturesEXT::default().micromap(true))
             } else {
                 None
             },
@@ -1003,6 +1047,21 @@ impl PhysicalDeviceFeatures {
                         // Same reason as for ray queries.
                         | F::EXTENDED_ACCELERATION_STRUCTURE_VERTEX_FORMATS,
             );
+            features.set(
+                F::EXPERIMENTAL_RAY_TRACING_MOTION_BLUR,
+                self.ray_tracing_motion_blur
+                    .is_some_and(|blur| blur.ray_tracing_motion_blur != 0),
+            );
+            features.set(
+                F::EXPERIMENTAL_RAY_TRACING_INVOCATION_REORDER,
+                self.ray_tracing_invocation_reorder
+                    .is_some_and(|reorder| reorder.ray_tracing_invocation_reorder != 0),
+            );
+            features.set(
+                F::EXPERIMENTAL_RAY_TRACING_OPACITY_MICROMAP,
+                self.opacity_micromap
+                    .is_some_and(|micromap| micromap.micromap != 0),
+            );
         }
 
         let rg11b10ufloat_renderable = supports_format(
@@ -1449,6 +1508,18 @@ impl PhysicalDeviceProperties {
             extensions.push(khr::ray_tracing_position_fetch::NAME)
         }
 
+        if requested_features.contains(wgt::Features::EXPERIMENTAL_RAY_TRACING_MOTION_BLUR) {
+            extensions.push(nv::ray_tracing_motion_blur::NAME)
+        }
+
+        if requested_features.contains(wgt::Features::EXPERIMENTAL_RAY_TRACING_INVOCATION_REORDER) {
+            extensions.push(nv::ray_tracing_invocation_reorder::NAME)
+        }
+
+        if requested_features.contains(wgt::Features::EXPERIMENTAL_RAY_TRACING_OPACITY_MICROMAP) {
+            extensions.push(ext::opacity_micromap::NAME)
+        }
+
         // Require `VK_EXT_conservative_rasterization` if the associated feature was requested
         if requested_features.contains(wgt::Features::CONSERVATIVE_RASTERIZATION) {
             extensions.push(ext::conservative_rasterization::NAME);
@@ -1877,6 +1948,7 @@ impl PhysicalDeviceProperties {
                 wgt::BufferSize::new(alignment).unwrap()
             },
             raw_tlas_instance_size: 64,
+            raw_tlas_motion_instance_size: size_of::<super::RawTlasMotionInstance>() as u32,
             ray_tracing_scratch_buffer_alignment: self.acceleration_structure.map_or(
                 0,
                 |acceleration_structure| {
@@ -2182,6 +2254,27 @@ impl super::InstanceShared {
                 let next = features
                     .position_fetch
                     .insert(vk::PhysicalDeviceRayTracingPositionFetchFeaturesKHR::default());
+                features2 = features2.push_next(next);
+            }
+
+            if capabilities.supports_extension(nv::ray_tracing_motion_blur::NAME) {
+                let next = features
+                    .ray_tracing_motion_blur
+                    .insert(vk::PhysicalDeviceRayTracingMotionBlurFeaturesNV::default());
+                features2 = features2.push_next(next);
+            }
+
+            if capabilities.supports_extension(nv::ray_tracing_invocation_reorder::NAME) {
+                let next = features
+                    .ray_tracing_invocation_reorder
+                    .insert(vk::PhysicalDeviceRayTracingInvocationReorderFeaturesNV::default());
+                features2 = features2.push_next(next);
+            }
+
+            if capabilities.supports_extension(ext::opacity_micromap::NAME) {
+                let next = features
+                    .opacity_micromap
+                    .insert(vk::PhysicalDeviceOpacityMicromapFeaturesEXT::default());
                 features2 = features2.push_next(next);
             }
 
@@ -2729,6 +2822,14 @@ impl super::Adapter {
         } else {
             None
         };
+        let opacity_micromap_fns = if enabled_extensions.contains(&ext::opacity_micromap::NAME) {
+            Some(ext::opacity_micromap::Device::new(
+                &self.instance.raw,
+                &raw_device,
+            ))
+        } else {
+            None
+        };
         let ray_tracing_pipeline_fns =
             if enabled_extensions.contains(&khr::ray_tracing_pipeline::NAME) {
                 Some(khr::ray_tracing_pipeline::Device::new(
@@ -2889,8 +2990,20 @@ impl super::Adapter {
             if features.contains(wgt::Features::EXPERIMENTAL_RAY_TRACING_PIPELINES) {
                 capabilities.push(spv::Capability::RayTracingKHR);
             }
+            if features.contains(wgt::Features::EXPERIMENTAL_RAY_TRACING_MOTION_BLUR) {
+                capabilities.push(spv::Capability::RayTracingMotionBlurNV);
+            }
+            if features.contains(wgt::Features::EXPERIMENTAL_RAY_TRACING_INVOCATION_REORDER) {
+                capabilities.push(spv::Capability::ShaderInvocationReorderNV);
+            }
+            if features.contains(wgt::Features::EXPERIMENTAL_RAY_TRACING_OPACITY_MICROMAP) {
+                capabilities.push(spv::Capability::RayTracingOpacityMicromapEXT);
+            }
             if features.contains(wgt::Features::EXPERIMENTAL_RAY_HIT_VERTEX_RETURN) {
-                capabilities.push(spv::Capability::RayQueryPositionFetchKHR)
+                capabilities.push(spv::Capability::RayQueryPositionFetchKHR);
+                if features.contains(wgt::Features::EXPERIMENTAL_RAY_TRACING_PIPELINES) {
+                    capabilities.push(spv::Capability::RayTracingPositionFetchKHR);
+                }
             }
             if features.contains(wgt::Features::EXPERIMENTAL_MESH_SHADER) {
                 capabilities.push(spv::Capability::MeshShadingEXT);
@@ -3019,6 +3132,7 @@ impl super::Adapter {
                 timeline_semaphore: timeline_semaphore_fn,
                 ray_tracing: ray_tracing_fns,
                 ray_tracing_pipelines: ray_tracing_pipeline_fns,
+                opacity_micromap: opacity_micromap_fns,
                 mesh_shading: mesh_shading_fns,
                 external_memory_fd: external_memory_fd_fn,
             },

@@ -213,6 +213,7 @@ fn upload_scene_components(
                         scene.geometries[i].0.end as u32 - scene.geometries[i].0.start as u32,
                     ),
                     flags: wgpu::AccelerationStructureGeometryFlags::OPAQUE,
+                    opacity_micromap: Vec::new(),
                 })
                 .collect();
 
@@ -248,6 +249,8 @@ fn upload_scene_components(
                     first_index: Some(scene.geometries[i].0.start as u32),
                     transform_buffer: None,
                     transform_buffer_offset: None,
+                    end_vertex_buffer: None,
+                    opacity_micromap: None,
                 })
                 .collect();
 

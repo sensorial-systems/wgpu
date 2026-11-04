@@ -48,6 +48,7 @@ fn hit_limits(ctx: TestingContext) {
                             index_format: None,
                             index_count: None,
                             flags: AccelerationStructureGeometryFlags::empty(),
+                            opacity_micromap: Vec::new(),
                         };
                         2
                     ],
@@ -72,6 +73,7 @@ fn hit_limits(ctx: TestingContext) {
                         index_format: None,
                         index_count: None,
                         flags: AccelerationStructureGeometryFlags::empty(),
+                        opacity_micromap: Vec::new(),
                     }],
                 },
             );

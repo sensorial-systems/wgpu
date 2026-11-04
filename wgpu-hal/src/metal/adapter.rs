@@ -1578,6 +1578,7 @@ impl super::CapabilitiesQuery {
                     MTLIndirectAccelerationStructureInstanceDescriptor,
                 >())
                 .unwrap(),
+                raw_tlas_motion_instance_size: 0,
                 ray_tracing_scratch_buffer_alignment: 1,
                 // Not yet supported
                 ray_tracing_pipeline_group_data_size: 0,

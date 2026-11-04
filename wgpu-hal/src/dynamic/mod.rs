@@ -22,9 +22,9 @@ use wgt::WasmNotSendSync;
 
 use crate::{
     AccelerationStructureAABBs, AccelerationStructureEntries, AccelerationStructureInstances,
-    AccelerationStructureTriangleIndices, AccelerationStructureTriangleTransform,
-    AccelerationStructureTriangles, BufferBinding, ExternalTextureBinding, ProgrammableStage,
-    TextureBinding,
+    AccelerationStructureOpacityMicromap, AccelerationStructureTriangleIndices,
+    AccelerationStructureTriangleTransform, AccelerationStructureTriangles, BufferBinding,
+    ExternalTextureBinding, ProgrammableStage, TextureBinding,
 };
 
 /// Base trait for all resources, allows downcasting via [`Any`].
@@ -191,6 +191,19 @@ impl<'a> AccelerationStructureEntries<'a, dyn DynBuffer> {
                                 }
                             }),
                             flags: t.flags,
+                            end_vertex_buffer: t.end_vertex_buffer.map(|b| b.expect_downcast_ref()),
+                            opacity_micromap: t.opacity_micromap.as_ref().map(|m| {
+                                AccelerationStructureOpacityMicromap {
+                                    data: m.data.map(|b| b.expect_downcast_ref()),
+                                    data_offset: m.data_offset,
+                                    triangles: m.triangles.map(|b| b.expect_downcast_ref()),
+                                    triangles_offset: m.triangles_offset,
+                                    indices: m
+                                        .indices
+                                        .map(|(b, offset)| (b.expect_downcast_ref(), offset)),
+                                    usage: m.usage,
+                                }
+                            }),
                         })
                         .collect(),
                 )

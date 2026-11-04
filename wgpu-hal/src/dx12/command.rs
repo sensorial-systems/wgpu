@@ -2011,40 +2011,230 @@ impl crate::CommandEncoder for super::CommandEncoder {
 
     unsafe fn begin_ray_tracing_pass(
         &mut self,
-        _desc: &crate::RayTracingPassDescriptor<super::QuerySet>,
+        desc: &crate::RayTracingPassDescriptor<super::QuerySet>,
     ) {
-        unreachable!("Ray tracing pipelines not supported")
+        // A ray tracing pass binds as a compute pass does: its root signature
+        // is the stages' global one.
+        unsafe { self.begin_pass(super::PassKind::Compute, desc.label) };
+
+        if let Some(timestamp_writes) = desc.timestamp_writes.as_ref() {
+            if let Some(index) = timestamp_writes.beginning_of_pass_write_index {
+                unsafe {
+                    self.write_timestamp(timestamp_writes.query_set, index);
+                }
+            }
+            self.end_of_pass_timer_query = timestamp_writes
+                .end_of_pass_write_index
+                .map(|index| (timestamp_writes.query_set.raw.clone(), index));
+        }
     }
 
     unsafe fn end_ray_tracing_pass(&mut self) {
-        unreachable!("Ray tracing pipelines not supported")
+        self.write_pass_end_timestamp_if_requested();
+        unsafe { self.end_pass() };
     }
 
     unsafe fn set_ray_tracing_pipeline(
         &mut self,
-        _pipeline: &<Self::A as crate::Api>::RayTracingPipeline,
+        pipeline: &<Self::A as crate::Api>::RayTracingPipeline,
     ) {
-        unreachable!("Ray tracing pipelines not supported")
+        let list = self.list.clone().unwrap();
+
+        if self.pass.layout.signature != pipeline.layout.signature {
+            // D3D12 requires full reset on signature change
+            unsafe { list.SetComputeRootSignature(pipeline.layout.signature.as_ref()) };
+            self.reset_signature(&pipeline.layout);
+        };
+
+        unsafe {
+            list.cast::<Direct3D12::ID3D12GraphicsCommandList4>()
+                .unwrap()
+                .SetPipelineState1(&pipeline.state)
+        }
     }
 
     unsafe fn trace_rays(
         &mut self,
-        _count: [u32; 3],
-        _ray_generation_group_data: crate::PipelineGroupData<super::Buffer>,
-        _miss_group_data: crate::PipelineGroupData<super::Buffer>,
-        _intersection_group_data: crate::PipelineGroupData<super::Buffer>,
+        count: [u32; 3],
+        ray_generation_group_data: crate::PipelineGroupData<super::Buffer>,
+        miss_group_data: crate::PipelineGroupData<super::Buffer>,
+        intersection_group_data: crate::PipelineGroupData<super::Buffer>,
+        callable_group_data: crate::PipelineGroupData<super::Buffer>,
     ) {
-        unreachable!("Ray tracing pipelines not supported")
+        self.prepare_dispatch([0; 3]);
+        let desc = dispatch_rays_desc(
+            count,
+            &ray_generation_group_data,
+            &miss_group_data,
+            &intersection_group_data,
+            &callable_group_data,
+        );
+        unsafe {
+            self.list
+                .as_ref()
+                .unwrap()
+                .cast::<Direct3D12::ID3D12GraphicsCommandList4>()
+                .unwrap()
+                .DispatchRays(&desc)
+        }
     }
 
     unsafe fn trace_rays_indirect(
         &mut self,
-        _ray_generation_group_data: crate::PipelineGroupData<super::Buffer>,
-        _miss_group_data: crate::PipelineGroupData<super::Buffer>,
-        _intersection_group_data: crate::PipelineGroupData<super::Buffer>,
-        _buffer: &super::Buffer,
-        _offset: wgt::BufferAddress,
+        ray_generation_group_data: crate::PipelineGroupData<super::Buffer>,
+        miss_group_data: crate::PipelineGroupData<super::Buffer>,
+        intersection_group_data: crate::PipelineGroupData<super::Buffer>,
+        callable_group_data: crate::PipelineGroupData<super::Buffer>,
+        buffer: &super::Buffer,
+        offset: wgt::BufferAddress,
     ) {
-        unreachable!("Ray tracing pipelines not supported")
+        // DXR's indirect trace reads a whole `D3D12_DISPATCH_RAYS_DESC`, its
+        // tables' ranges with its size: written into a buffer of the
+        // encoder's own, the ranges from the command list, the size copied
+        // from `buffer`.
+        self.prepare_dispatch([0; 3]);
+        let desc = dispatch_rays_desc(
+            [0; 3],
+            &ray_generation_group_data,
+            &miss_group_data,
+            &intersection_group_data,
+            &callable_group_data,
+        );
+        let size = size_of::<Direct3D12::D3D12_DISPATCH_RAYS_DESC>() as u64;
+        let (resource, allocation) = super::suballocation::DeviceAllocationContext::from(&*self)
+            .create_buffer(&crate::BufferDescriptor {
+                label: None,
+                size,
+                usage: wgt::BufferUses::COPY_DST | wgt::BufferUses::INDIRECT,
+                memory_flags: crate::MemoryFlags::empty(),
+            })
+            .expect("internal error: failed to allocate an indirect trace's arguments");
+        let arguments = super::Buffer {
+            resource,
+            allocated_size: size,
+            allocation,
+            _drop_guard: None,
+        };
+        let list = self.list.clone().unwrap();
+        let address = unsafe { arguments.resource.GetGPUVirtualAddress() };
+        // Every word but the size's last three; the buffer, new, is
+        // promoted from the common state to that of a copy's destination.
+        // SAFETY: the description is plain words: addresses, sizes, strides.
+        let words: &[u32] = unsafe {
+            core::slice::from_raw_parts(
+                <*const _>::cast(&desc),
+                size_of::<Direct3D12::D3D12_DISPATCH_RAYS_DESC>() / 4,
+            )
+        };
+        let size_offset = core::mem::offset_of!(Direct3D12::D3D12_DISPATCH_RAYS_DESC, Width);
+        let parameters: Vec<Direct3D12::D3D12_WRITEBUFFERIMMEDIATE_PARAMETER> = words
+            .iter()
+            .enumerate()
+            .take(size_offset / 4)
+            .map(
+                |(index, &word)| Direct3D12::D3D12_WRITEBUFFERIMMEDIATE_PARAMETER {
+                    Dest: address + 4 * index as u64,
+                    Value: word,
+                },
+            )
+            .collect();
+        unsafe {
+            list.cast::<Direct3D12::ID3D12GraphicsCommandList2>()
+                .unwrap()
+                .WriteBufferImmediate(parameters.len() as u32, parameters.as_ptr(), None)
+        };
+        unsafe {
+            list.ResourceBarrier(&[transition(
+                &buffer.resource,
+                Direct3D12::D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT,
+                Direct3D12::D3D12_RESOURCE_STATE_COPY_SOURCE,
+            )]);
+            list.CopyBufferRegion(
+                &arguments.resource,
+                size_offset as u64,
+                &buffer.resource,
+                offset,
+                12,
+            );
+            list.ResourceBarrier(&[
+                transition(
+                    &buffer.resource,
+                    Direct3D12::D3D12_RESOURCE_STATE_COPY_SOURCE,
+                    Direct3D12::D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT,
+                ),
+                transition(
+                    &arguments.resource,
+                    Direct3D12::D3D12_RESOURCE_STATE_COPY_DEST,
+                    Direct3D12::D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT,
+                ),
+            ]);
+            list.ExecuteIndirect(
+                self.shared
+                    .cmd_signatures
+                    .dispatch_rays
+                    .as_ref()
+                    .expect("ray tracing pipelines are enabled"),
+                1,
+                &arguments.resource,
+                0,
+                None,
+                0,
+            );
+        }
+        self.intermediate_copy_bufs.push(arguments);
+    }
+}
+
+/// A trace's tables and size, as DXR takes them.
+fn dispatch_rays_desc(
+    [width, height, depth]: [u32; 3],
+    ray_generation: &crate::PipelineGroupData<super::Buffer>,
+    misses: &crate::PipelineGroupData<super::Buffer>,
+    hit_groups: &crate::PipelineGroupData<super::Buffer>,
+    callables: &crate::PipelineGroupData<super::Buffer>,
+) -> Direct3D12::D3D12_DISPATCH_RAYS_DESC {
+    let start = |data: &crate::PipelineGroupData<super::Buffer>| match data.count {
+        // An empty table, as one without callables is.
+        0 => 0,
+        _ => (unsafe { data.buffer.resource.GetGPUVirtualAddress() }) + data.offset,
+    };
+    let table = |data: &crate::PipelineGroupData<super::Buffer>| {
+        Direct3D12::D3D12_GPU_VIRTUAL_ADDRESS_RANGE_AND_STRIDE {
+            StartAddress: start(data),
+            SizeInBytes: data.stride * data.count,
+            StrideInBytes: data.stride,
+        }
+    };
+    Direct3D12::D3D12_DISPATCH_RAYS_DESC {
+        RayGenerationShaderRecord: Direct3D12::D3D12_GPU_VIRTUAL_ADDRESS_RANGE {
+            StartAddress: start(ray_generation),
+            SizeInBytes: ray_generation.stride,
+        },
+        MissShaderTable: table(misses),
+        HitGroupTable: table(hit_groups),
+        CallableShaderTable: table(callables),
+        Width: width,
+        Height: height,
+        Depth: depth,
+    }
+}
+
+/// A transition of all of `resource` from `before` to `after`.
+fn transition(
+    resource: &Direct3D12::ID3D12Resource,
+    before: Direct3D12::D3D12_RESOURCE_STATES,
+    after: Direct3D12::D3D12_RESOURCE_STATES,
+) -> Direct3D12::D3D12_RESOURCE_BARRIER {
+    Direct3D12::D3D12_RESOURCE_BARRIER {
+        Type: Direct3D12::D3D12_RESOURCE_BARRIER_TYPE_TRANSITION,
+        Flags: Direct3D12::D3D12_RESOURCE_BARRIER_FLAG_NONE,
+        Anonymous: Direct3D12::D3D12_RESOURCE_BARRIER_0 {
+            Transition: mem::ManuallyDrop::new(Direct3D12::D3D12_RESOURCE_TRANSITION_BARRIER {
+                pResource: unsafe { borrow_interface_temporarily(resource) },
+                Subresource: Direct3D12::D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
+                StateBefore: before,
+                StateAfter: after,
+            }),
+        },
     }
 }

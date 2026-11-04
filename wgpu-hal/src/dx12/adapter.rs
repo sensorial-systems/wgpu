@@ -707,7 +707,7 @@ impl super::Adapter {
         }
         .is_ok();
 
-        // Once ray tracing pipelines are supported they also will go here
+        // Ray queries and ray tracing pipelines alike.
         let supports_ray_tracing = features5.RaytracingTier.0
             >= Direct3D12::D3D12_RAYTRACING_TIER_1_1.0
             && shader_model >= naga::back::hlsl::ShaderModel::V6_5
@@ -715,7 +715,8 @@ impl super::Adapter {
 
         features.set(
             wgt::Features::EXPERIMENTAL_RAY_QUERY
-                | wgt::Features::EXTENDED_ACCELERATION_STRUCTURE_VERTEX_FORMATS,
+                | wgt::Features::EXTENDED_ACCELERATION_STRUCTURE_VERTEX_FORMATS
+                | wgt::Features::EXPERIMENTAL_RAY_TRACING_PIPELINES,
             supports_ray_tracing,
         );
 
@@ -1122,9 +1123,16 @@ impl super::Adapter {
                         max_acceleration_structures_per_shader_stage,
                     max_multiview_view_count,
 
-                    // not yet implemented
-                    max_ray_dispatch_count: 0,
-                    max_ray_recursion_depth: 0,
+                    max_ray_dispatch_count: if supports_ray_tracing {
+                        Direct3D12::D3D12_RAYTRACING_MAX_RAY_GENERATION_SHADER_THREADS
+                    } else {
+                        0
+                    },
+                    max_ray_recursion_depth: if supports_ray_tracing {
+                        Direct3D12::D3D12_RAYTRACING_MAX_DECLARABLE_TRACE_RECURSION_DEPTH
+                    } else {
+                        0
+                    },
                 }),
                 alignments: crate::Alignments {
                     buffer_copy_offset: wgt::BufferSize::new(
@@ -1142,12 +1150,17 @@ impl super::Adapter {
                         Direct3D12::D3D12_RAYTRACING_INSTANCE_DESC,
                     >())
                     .unwrap(),
+                    raw_tlas_motion_instance_size: 0,
                     ray_tracing_scratch_buffer_alignment:
                         Direct3D12::D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BYTE_ALIGNMENT,
-                    // Not yet implemented
-                    ray_tracing_pipeline_group_data_size: 0,
-                    ray_tracing_pipeline_group_data_alignment: 0,
-                    ray_tracing_pipeline_data_offset_alignment: 0,
+                    // A shader record is its identifier, a table starts
+                    // on its own alignment.
+                    ray_tracing_pipeline_group_data_size:
+                        Direct3D12::D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES,
+                    ray_tracing_pipeline_group_data_alignment:
+                        Direct3D12::D3D12_RAYTRACING_SHADER_RECORD_BYTE_ALIGNMENT,
+                    ray_tracing_pipeline_data_offset_alignment:
+                        Direct3D12::D3D12_RAYTRACING_SHADER_TABLE_BYTE_ALIGNMENT,
                 },
                 downlevel,
                 cooperative_matrix_properties: Vec::new(),

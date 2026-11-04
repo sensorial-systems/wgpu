@@ -1,3 +1,5 @@
+use alloc::{boxed::Box, vec::Vec};
+
 use super::conv;
 use arrayvec::ArrayVec;
 use ash::vk;
@@ -613,8 +615,29 @@ impl crate::CommandEncoder for super::CommandEncoder {
         let mut ranges_ptrs = smallvec::SmallVec::<
             [&[vk::AccelerationStructureBuildRangeInfoKHR]; CAPACITY_OUTER],
         >::with_capacity(descriptor_count);
+        // The end vertices of triangles that move, and their opacity
+        // micromaps, chained to their triangles: boxed, so that they stay
+        // where the chain points.
+        let mut motion_storage =
+            Vec::<Box<vk::AccelerationStructureGeometryMotionTrianglesDataNV>>::new();
+        let mut micromap_storage = Vec::<(
+            Box<vk::AccelerationStructureTrianglesOpacityMicromapEXT>,
+            Vec<vk::MicromapUsageEXT>,
+        )>::new();
+        // The micromaps' builds, which come before the structures': each in
+        // its structure's scratch, one after another.
+        let mut micromap_builds = Vec::<vk::MicromapBuildInfoEXT>::new();
 
         for desc in descriptors {
+            let scratch_device_address = unsafe {
+                ray_tracing_functions
+                    .buffer_device_address
+                    .get_buffer_device_address(
+                        &vk::BufferDeviceAddressInfo::default().buffer(desc.scratch_buffer.raw),
+                    )
+            };
+            let mut micromaps = desc.destination_acceleration_structure.micromaps.iter();
+            let mut micromap_scratch = scratch_device_address + desc.scratch_buffer_offset;
             let (geometries, ranges) = match *desc.entries {
                 crate::AccelerationStructureEntries::Instances(ref instances) => {
                     let instance_data = vk::AccelerationStructureGeometryInstancesDataKHR::default(
@@ -671,6 +694,69 @@ impl crate::CommandEncoder for super::CommandEncoder {
                                 .primitive_offset(indices.offset);
                         } else {
                             range = range.primitive_count(triangles.vertex_count / 3);
+                        }
+
+                        if let Some(end_vertex_buffer) = triangles.end_vertex_buffer {
+                            let motion = Box::new(
+                                vk::AccelerationStructureGeometryMotionTrianglesDataNV::default()
+                                    .vertex_data(vk::DeviceOrHostAddressConstKHR {
+                                        device_address: get_device_address(Some(end_vertex_buffer))
+                                            + (triangles.first_vertex as u64
+                                                * triangles.vertex_stride),
+                                    }),
+                            );
+                            triangle_data.p_next = <*const _>::cast(&*motion);
+                            motion_storage.push(motion);
+                        }
+
+                        if let Some(ref opacity) = triangles.opacity_micromap {
+                            let micromap = micromaps
+                                .next()
+                                .expect("a micromap for each geometry that has one");
+                            let usage = super::micromap_usage(opacity.usage);
+                            let mut build = vk::MicromapBuildInfoEXT::default()
+                                .ty(vk::MicromapTypeEXT::OPACITY_MICROMAP)
+                                .flags(vk::BuildMicromapFlagsEXT::PREFER_FAST_TRACE)
+                                .mode(vk::BuildMicromapModeEXT::BUILD)
+                                .dst_micromap(micromap.raw)
+                                .data(vk::DeviceOrHostAddressConstKHR {
+                                    device_address: get_device_address(opacity.data)
+                                        + opacity.data_offset,
+                                })
+                                .scratch_data(vk::DeviceOrHostAddressKHR {
+                                    device_address: micromap_scratch,
+                                })
+                                .triangle_array(vk::DeviceOrHostAddressConstKHR {
+                                    device_address: get_device_address(opacity.triangles)
+                                        + opacity.triangles_offset,
+                                })
+                                .triangle_array_stride(8);
+                            build.usage_counts_count = usage.len() as u32;
+                            build.p_usage_counts = usage.as_ptr();
+                            micromap_builds.push(build);
+                            micromap_scratch += micromap
+                                .scratch_size
+                                .next_multiple_of(super::MICROMAP_SCRATCH_ALIGNMENT);
+
+                            let mut chained = Box::new(
+                                vk::AccelerationStructureTrianglesOpacityMicromapEXT::default()
+                                    .micromap(micromap.raw),
+                            );
+                            match opacity.indices {
+                                Some((buffer, offset)) => {
+                                    chained.index_type = vk::IndexType::UINT32;
+                                    chained.index_buffer = vk::DeviceOrHostAddressConstKHR {
+                                        device_address: get_device_address(Some(buffer)) + offset,
+                                    };
+                                    chained.index_stride = 4;
+                                }
+                                None => chained.index_type = vk::IndexType::NONE_KHR,
+                            }
+                            chained.usage_counts_count = usage.len() as u32;
+                            chained.p_usage_counts = usage.as_ptr();
+                            chained.p_next = triangle_data.p_next.cast_mut();
+                            triangle_data.p_next = <*const _>::cast(&*chained);
+                            micromap_storage.push((chained, usage));
                         }
 
                         if let Some(ref transform) = triangles.transform {
@@ -739,13 +825,6 @@ impl crate::CommandEncoder for super::CommandEncoder {
             ranges_storage.push(ranges);
             geometries_storage.push(geometries);
 
-            let scratch_device_address = unsafe {
-                ray_tracing_functions
-                    .buffer_device_address
-                    .get_buffer_device_address(
-                        &vk::BufferDeviceAddressInfo::default().buffer(desc.scratch_buffer.raw),
-                    )
-            };
             let ty = match *desc.entries {
                 crate::AccelerationStructureEntries::Instances(_) => {
                     vk::AccelerationStructureTypeKHR::TOP_LEVEL
@@ -755,7 +834,15 @@ impl crate::CommandEncoder for super::CommandEncoder {
             let mut geometry_info = vk::AccelerationStructureBuildGeometryInfoKHR::default()
                 .ty(ty)
                 .mode(conv::map_acceleration_structure_build_mode(desc.mode))
-                .flags(conv::map_acceleration_structure_flags(desc.flags))
+                .flags(
+                    conv::map_acceleration_structure_flags(desc.flags)
+                        | match desc.destination_acceleration_structure.micromaps.is_empty() {
+                            true => vk::BuildAccelerationStructureFlagsKHR::empty(),
+                            false => {
+                                vk::BuildAccelerationStructureFlagsKHR::ALLOW_DISABLE_OPACITY_MICROMAPS_EXT
+                            }
+                        },
+                )
                 .dst_acceleration_structure(desc.destination_acceleration_structure.raw)
                 .scratch_data(vk::DeviceOrHostAddressKHR {
                     device_address: scratch_device_address + desc.scratch_buffer_offset,
@@ -777,11 +864,46 @@ impl crate::CommandEncoder for super::CommandEncoder {
             ranges_ptrs.push(&ranges_storage[i]);
         }
 
+        // The micromaps, then a barrier: the structures read them, and use
+        // the scratch they were built in.
+        if !micromap_builds.is_empty() {
+            let functions = self
+                .device
+                .extension_fns
+                .opacity_micromap
+                .as_ref()
+                .expect("Feature `EXPERIMENTAL_RAY_TRACING_OPACITY_MICROMAP` not enabled");
+            unsafe {
+                (functions.fp().cmd_build_micromaps_ext)(
+                    self.active,
+                    micromap_builds.len() as u32,
+                    micromap_builds.as_ptr(),
+                );
+                // Micromap builds have no stage of their own before
+                // synchronization2.
+                self.device.raw.cmd_pipeline_barrier(
+                    self.active,
+                    vk::PipelineStageFlags::ALL_COMMANDS,
+                    vk::PipelineStageFlags::ACCELERATION_STRUCTURE_BUILD_KHR,
+                    vk::DependencyFlags::empty(),
+                    &[vk::MemoryBarrier::default()
+                        .src_access_mask(vk::AccessFlags::MEMORY_WRITE)
+                        .dst_access_mask(
+                            vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE,
+                        )],
+                    &[],
+                    &[],
+                );
+            }
+        }
+
         unsafe {
             ray_tracing_functions
                 .acceleration_structure
                 .cmd_build_acceleration_structures(self.active, &geometry_infos, &ranges_ptrs);
         }
+        drop(motion_storage);
+        drop(micromap_storage);
     }
 
     unsafe fn place_acceleration_structure_barrier(
@@ -1444,6 +1566,7 @@ impl crate::CommandEncoder for super::CommandEncoder {
         ray_generation_group_data: crate::PipelineGroupData<super::Buffer>,
         miss_group_data: crate::PipelineGroupData<super::Buffer>,
         intersection_group_data: crate::PipelineGroupData<super::Buffer>,
+        callable_group_data: crate::PipelineGroupData<super::Buffer>,
     ) {
         let ray_tracing_functions = self
             .device
@@ -1488,10 +1611,16 @@ impl crate::CommandEncoder for super::CommandEncoder {
                     stride: intersection_group_data.stride,
                     size: intersection_group_data.stride * intersection_group_data.count,
                 },
-                &vk::StridedDeviceAddressRegionKHR {
-                    device_address: 0,
-                    stride: 0,
-                    size: 0,
+                // No callable stages: an empty region.
+                &if callable_group_data.count == 0 {
+                    vk::StridedDeviceAddressRegionKHR::default()
+                } else {
+                    vk::StridedDeviceAddressRegionKHR {
+                        device_address: get_device_address(callable_group_data.buffer)
+                            + callable_group_data.offset,
+                        stride: callable_group_data.stride,
+                        size: callable_group_data.stride * callable_group_data.count,
+                    }
                 },
                 count[0],
                 count[1],
@@ -1505,6 +1634,7 @@ impl crate::CommandEncoder for super::CommandEncoder {
         ray_generation_group_data: crate::PipelineGroupData<super::Buffer>,
         miss_group_data: crate::PipelineGroupData<super::Buffer>,
         intersection_group_data: crate::PipelineGroupData<super::Buffer>,
+        callable_group_data: crate::PipelineGroupData<super::Buffer>,
         buffer: &super::Buffer,
         offset: wgt::BufferAddress,
     ) {
@@ -1530,12 +1660,14 @@ impl crate::CommandEncoder for super::CommandEncoder {
                 )
         };
 
-        let region = |data: &crate::PipelineGroupData<super::Buffer>| {
-            vk::StridedDeviceAddressRegionKHR {
+        let region = |data: &crate::PipelineGroupData<super::Buffer>| match data.count {
+            // An empty region, as no callable stages have.
+            0 => vk::StridedDeviceAddressRegionKHR::default(),
+            _ => vk::StridedDeviceAddressRegionKHR {
                 device_address: get_device_address(data.buffer) + data.offset,
                 stride: data.stride,
                 size: data.stride * data.count,
-            }
+            },
         };
 
         unsafe {
@@ -1548,7 +1680,7 @@ impl crate::CommandEncoder for super::CommandEncoder {
                 },
                 &region(&miss_group_data),
                 &region(&intersection_group_data),
-                &vk::StridedDeviceAddressRegionKHR::default(),
+                &region(&callable_group_data),
                 get_device_address(buffer) + offset,
             )
         };

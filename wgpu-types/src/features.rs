@@ -990,6 +990,60 @@ features! {
         #[name("wgpu-ray-hit-vertex-return")]
         const EXPERIMENTAL_RAY_HIT_VERTEX_RETURN = 1 << 49;
 
+        /// ***THIS IS EXPERIMENTAL:*** Features enabled by this may have
+        /// major bugs in them and are expected to be subject to breaking changes, suggestions
+        /// for the API exposed by this should be posted on [the ray-tracing issue](https://github.com/gfx-rs/wgpu/issues/6762)
+        ///
+        /// Allows acceleration structures that move, built with
+        /// [`AccelerationStructureFlags::ALLOW_MOTION`], and rays traced through them at a
+        /// time: `traceRayMotion` and `@builtin(current_ray_time)` in ray tracing pipelines,
+        /// with `enable wgpu_ray_tracing_motion_blur;`.
+        ///
+        /// Supported platforms:
+        /// - Vulkan (with [VK_NV_ray_tracing_motion_blur](https://registry.khronos.org/vulkan/specs/latest/man/html/VK_NV_ray_tracing_motion_blur.html))
+        ///
+        /// This is a native only feature
+        ///
+        /// [`AccelerationStructureFlags::ALLOW_MOTION`]: super::AccelerationStructureFlags::ALLOW_MOTION
+        #[name("wgpu-ray-tracing-motion-blur")]
+        const EXPERIMENTAL_RAY_TRACING_MOTION_BLUR = 1 << 16;
+
+        /// ***THIS IS EXPERIMENTAL:*** Features enabled by this may have
+        /// major bugs in them and are expected to be subject to breaking changes, suggestions
+        /// for the API exposed by this should be posted on [the ray-tracing issue](https://github.com/gfx-rs/wgpu/issues/6762)
+        ///
+        /// Allows hit objects in ray tracing pipelines, with
+        /// `enable wgpu_ray_tracing_invocation_reorder;`: a trace into a `hit_object` runs its
+        /// any-hit and intersection stages, the hit object's closest-hit or miss stage runs where
+        /// it is executed, and in between the invocations may be reordered by what their hit
+        /// objects hold (`reorderThread`), so that those that go on alike run together.
+        ///
+        /// Supported platforms:
+        /// - Vulkan (with [VK_NV_ray_tracing_invocation_reorder](https://registry.khronos.org/vulkan/specs/latest/man/html/VK_NV_ray_tracing_invocation_reorder.html))
+        ///
+        /// This is a native only feature
+        #[name("wgpu-ray-tracing-invocation-reorder")]
+        const EXPERIMENTAL_RAY_TRACING_INVOCATION_REORDER = 1 << 25;
+
+        /// ***THIS IS EXPERIMENTAL:*** Features enabled by this may have
+        /// major bugs in them and are expected to be subject to breaking changes, suggestions
+        /// for the API exposed by this should be posted on [the ray-tracing issue](https://github.com/gfx-rs/wgpu/issues/6762)
+        ///
+        /// Allows opacity micromaps on a bottom level acceleration structure's triangles: each
+        /// triangle split into micro-triangles, transparent, opaque or unknown, which rays pass
+        /// through, hit as opaque, or hit as non-opaque geometry -- an alpha test the traversal
+        /// does without any-hit stages. See [`BlasTriangleGeometrySizeDescriptor::opacity_micromap`].
+        /// `RAY_FLAG_FORCE_OPACITY_MICROMAP_2_STATE` with `enable wgpu_ray_tracing_opacity_micromap;`.
+        ///
+        /// Supported platforms:
+        /// - Vulkan (with [VK_EXT_opacity_micromap](https://registry.khronos.org/vulkan/specs/latest/man/html/VK_EXT_opacity_micromap.html))
+        ///
+        /// This is a native only feature
+        ///
+        /// [`BlasTriangleGeometrySizeDescriptor::opacity_micromap`]: super::BlasTriangleGeometrySizeDescriptor::opacity_micromap
+        #[name("wgpu-ray-tracing-opacity-micromap")]
+        const EXPERIMENTAL_RAY_TRACING_OPACITY_MICROMAP = 1 << 35;
+
         /// Enables multiview in mesh shader pipelines
         ///
         /// Supported platforms:
@@ -1582,7 +1636,10 @@ impl Features {
                     | FeaturesWGPU::EXPERIMENTAL_RAY_QUERY.bits()
                     | FeaturesWGPU::EXPERIMENTAL_RAY_HIT_VERTEX_RETURN.bits()
                     | FeaturesWGPU::EXPERIMENTAL_COOPERATIVE_MATRIX.bits()
-                    | FeaturesWGPU::EXPERIMENTAL_RAY_TRACING_PIPELINES.bits(),
+                    | FeaturesWGPU::EXPERIMENTAL_RAY_TRACING_PIPELINES.bits()
+                    | FeaturesWGPU::EXPERIMENTAL_RAY_TRACING_MOTION_BLUR.bits()
+                    | FeaturesWGPU::EXPERIMENTAL_RAY_TRACING_INVOCATION_REORDER.bits()
+                    | FeaturesWGPU::EXPERIMENTAL_RAY_TRACING_OPACITY_MICROMAP.bits(),
             ),
             FeaturesWebGPU::empty(),
         )

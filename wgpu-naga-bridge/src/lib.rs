@@ -144,6 +144,18 @@ pub fn features_to_naga_capabilities(
         features.intersects(wgt::Features::EXPERIMENTAL_RAY_HIT_VERTEX_RETURN),
     );
     caps.set(
+        Caps::RAY_TRACING_MOTION_BLUR,
+        features.intersects(wgt::Features::EXPERIMENTAL_RAY_TRACING_MOTION_BLUR),
+    );
+    caps.set(
+        Caps::RAY_TRACING_INVOCATION_REORDER,
+        features.intersects(wgt::Features::EXPERIMENTAL_RAY_TRACING_INVOCATION_REORDER),
+    );
+    caps.set(
+        Caps::RAY_TRACING_OPACITY_MICROMAP,
+        features.intersects(wgt::Features::EXPERIMENTAL_RAY_TRACING_OPACITY_MICROMAP),
+    );
+    caps.set(
         Caps::TEXTURE_EXTERNAL,
         features.intersects(wgt::Features::EXTERNAL_TEXTURE),
     );
@@ -330,5 +342,7 @@ pub fn map_naga_stage(stage: naga::ShaderStage) -> wgt::ShaderStages {
         naga::ShaderStage::AnyHit => wgt::ShaderStages::ANY_HIT,
         naga::ShaderStage::ClosestHit => wgt::ShaderStages::CLOSEST_HIT,
         naga::ShaderStage::Miss => wgt::ShaderStages::MISS,
+        naga::ShaderStage::Intersection => wgt::ShaderStages::INTERSECTION,
+        naga::ShaderStage::Callable => wgt::ShaderStages::CALLABLE,
     }
 }

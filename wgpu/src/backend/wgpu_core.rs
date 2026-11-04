@@ -1491,8 +1491,19 @@ impl dispatch::DeviceInterface for CoreDevice {
                         closest_hit: downcast_rt_stage(closest_hit),
                         any_hit: any_hit.as_ref().map(|stage| downcast_rt_stage(stage)),
                     },
+                    crate::RayTracingIntersectionDescriptor::Procedural {
+                        intersection,
+                        closest_hit,
+                        any_hit,
+                    } => rt_pipe::RayTracingIntersectionDescriptor::Procedural {
+                        intersection: downcast_rt_stage(intersection),
+                        closest_hit: closest_hit.as_ref().map(|stage| downcast_rt_stage(stage)),
+                        any_hit: any_hit.as_ref().map(|stage| downcast_rt_stage(stage)),
+                    },
                 })
                 .collect::<Vec<_>>(),
+            callables: desc.callables.iter().map(downcast_rt_stage).collect(),
+            max_geometry_stride: desc.max_geometry_stride,
             max_recursion_depth: desc.max_recursion_depth,
             cache: desc
                 .cache
@@ -2386,6 +2397,19 @@ impl dispatch::CommandEncoderInterface for CoreCommandEncoder {
                             first_vertex: tg.first_vertex,
                             vertex_stride: tg.vertex_stride,
                             first_index: tg.first_index,
+                            end_vertex_buffer: tg
+                                .end_vertex_buffer
+                                .map(|buf| buf.inner.as_core().wgpu_buffer.clone()),
+                            opacity_micromap: tg.opacity_micromap.as_ref().map(|micromap| {
+                                wgc::ray_tracing::BlasOpacityMicromap {
+                                    data: micromap.data,
+                                    data_offset: micromap.data_offset,
+                                    triangles: micromap.triangles,
+                                    triangles_offset: micromap.triangles_offset,
+                                    indices: micromap.indices,
+                                }
+                                .map(|buf| buf.inner.as_core().wgpu_buffer.clone())
+                            }),
                         }
                     });
                     wgc::ray_tracing::BlasGeometries::TriangleGeometries(Box::new(iter))
@@ -2422,6 +2446,8 @@ impl dispatch::CommandEncoderInterface for CoreCommandEncoder {
                             custom_data: instance.custom_data,
                             mask: instance.mask,
                             intersection_index: instance.intersection_index,
+                            flags: instance.flags,
+                            end_transform: instance.end_transform,
                         })
                 })
                 .collect();

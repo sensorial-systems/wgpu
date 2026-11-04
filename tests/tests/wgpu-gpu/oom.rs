@@ -193,6 +193,7 @@ static BLAS_OOM_TEST: GpuTestConfiguration = GpuTestConfiguration::new()
                         index_format: None,
                         index_count: None,
                         flags: AccelerationStructureGeometryFlags::OPAQUE,
+                        opacity_micromap: Vec::new(),
                     }],
                 },
             );

@@ -416,7 +416,9 @@ impl<'scope, 'snatch_guard, 'cmd_enc> State<'scope, 'snatch_guard, 'cmd_enc> {
         // `UsageScope`s is significant (even with the pool), we add and then
         // remove usage from a single usage scope.
 
-        let intersection_types = self.pipeline.as_ref().unwrap().intersection_types()?;
+        let pipeline = self.pipeline.as_ref().unwrap();
+        let intersection_types = pipeline.intersection_types()?;
+        let max_geometry_stride = pipeline.max_geometry_stride()?;
 
         for bind_group in self.pass.binder.list_active() {
             self.intermediate_trackers
@@ -426,6 +428,7 @@ impl<'scope, 'snatch_guard, 'cmd_enc> State<'scope, 'snatch_guard, 'cmd_enc> {
                 self.pass.base.as_actions.push(AsAction::TraceTlas(
                     tlas.clone(),
                     intersection_types.clone(),
+                    max_geometry_stride,
                 ));
             }
         }
@@ -1106,24 +1109,24 @@ fn trace_rays(
 
     let current_pipeline = state.pipeline.as_ref().unwrap();
     let shader_binding_data = current_pipeline.shader_binding_data()?;
-    let [ray_generation, miss, intersection] = group_data(shader_binding_data, device);
+    let [ray_generation, miss, intersection, callable] = group_data(shader_binding_data, device);
 
     unsafe {
         state
             .pass
             .base
             .raw_encoder
-            .trace_rays(dims, ray_generation, miss, intersection);
+            .trace_rays(dims, ray_generation, miss, intersection, callable);
     }
     Ok(())
 }
 
-/// The ray generation, miss and intersection regions of a pipeline's
-/// shader binding table.
+/// The ray generation, miss, intersection and callable regions of a
+/// pipeline's shader binding table.
 fn group_data<'a>(
     shader_binding_data: &'a crate::ray_tracing_pipeline::ShaderBindingData,
     device: &Device,
-) -> [hal::PipelineGroupData<'a, dyn hal::DynBuffer>; 3] {
+) -> [hal::PipelineGroupData<'a, dyn hal::DynBuffer>; 4] {
     let stride = device.alignments.ray_tracing_pipeline_group_data_size as BufferAddress;
     let region = |offset, count: u32| hal::PipelineGroupData {
         buffer: shader_binding_data.raw.as_ref(),
@@ -1133,10 +1136,17 @@ fn group_data<'a>(
     };
     [
         region(0, 1),
-        region(shader_binding_data.miss_offset, shader_binding_data.num_misses),
+        region(
+            shader_binding_data.miss_offset,
+            shader_binding_data.num_misses,
+        ),
         region(
             shader_binding_data.intersection_offset,
             shader_binding_data.intersection_records,
+        ),
+        region(
+            shader_binding_data.callable_offset,
+            shader_binding_data.num_callables,
         ),
     ]
 }
@@ -1198,13 +1208,14 @@ fn trace_rays_indirect(
     let buf_raw = buffer.try_raw(state.pass.base.snatch_guard)?;
     let current_pipeline = state.pipeline.as_ref().unwrap();
     let shader_binding_data = current_pipeline.shader_binding_data()?;
-    let [ray_generation, miss, intersection] = group_data(shader_binding_data, device);
+    let [ray_generation, miss, intersection, callable] = group_data(shader_binding_data, device);
 
     unsafe {
         state.pass.base.raw_encoder.trace_rays_indirect(
             ray_generation,
             miss,
             intersection,
+            callable,
             buf_raw,
             offset,
         );

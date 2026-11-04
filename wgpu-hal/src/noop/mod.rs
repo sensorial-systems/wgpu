@@ -177,6 +177,7 @@ pub const CAPABILITIES: crate::Capabilities = {
             buffer_copy_pitch: wgt::BufferSize::MIN,
             uniform_bounds_check_alignment: wgt::BufferSize::MIN,
             raw_tlas_instance_size: 0,
+            raw_tlas_motion_instance_size: 0,
             ray_tracing_scratch_buffer_alignment: 1,
             ray_tracing_pipeline_group_data_size: 1,
             ray_tracing_pipeline_group_data_alignment: 1,

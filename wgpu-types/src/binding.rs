@@ -247,6 +247,10 @@ crate::bitflags_array! {
         const CLOSEST_HIT = 1 << 4;
         /// Binding is visible from the ray miss shader of a ray tracing pipeline.
         const MISS = 1 << 5;
+        /// Binding is visible from the intersection shader of a ray tracing pipeline.
+        const INTERSECTION = 1 << 6;
+        /// Binding is visible from the callable shaders of a ray tracing pipeline.
+        const CALLABLE = 1 << 7;
     }
 }
 

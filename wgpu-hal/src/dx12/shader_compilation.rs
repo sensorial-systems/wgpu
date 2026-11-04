@@ -378,9 +378,10 @@ fn compile_dxc(
         .and_then(sanitize_source_name);
     let source_name = source_name.as_deref().map(OPCWSTR::new);
     let raw_ep = OPCWSTR::new(raw_ep);
+    let library = full_stage.starts_with("lib_");
     let full_stage = OPCWSTR::new(full_stage);
 
-    let mut compile_args = arrayvec::ArrayVec::<PCWSTR, 13>::new_const();
+    let mut compile_args = arrayvec::ArrayVec::<PCWSTR, 14>::new_const();
 
     if let Some(source_name) = source_name.as_ref() {
         compile_args.push(source_name.ptr())
@@ -417,6 +418,12 @@ fn compile_dxc(
         .intersects(wgt::Features::SHADER_F16 | wgt::Features::SHADER_I16)
     {
         compile_args.push(windows::core::w!("-enable-16bit-types"));
+    }
+
+    // A ray tracing stage's payload is any struct, without the access
+    // qualifiers shader model 6.7 asks for by default.
+    if library {
+        compile_args.push(windows::core::w!("-disable-payload-qualifiers"));
     }
 
     let buffer = Dxc::DxcBuffer {

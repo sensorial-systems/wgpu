@@ -91,7 +91,11 @@ impl RayTracingPass<'_> {
     /// The buffer needs [`BufferUsages::INDIRECT`] usage. Unlike
     /// [`trace_rays`](Self::trace_rays)'s, these sizes are not checked
     /// against the device's limits.
-    pub fn trace_rays_indirect(&mut self, indirect_buffer: &Buffer, indirect_offset: BufferAddress) {
+    pub fn trace_rays_indirect(
+        &mut self,
+        indirect_buffer: &Buffer,
+        indirect_offset: BufferAddress,
+    ) {
         self.inner
             .trace_rays_indirect(&indirect_buffer.inner, indirect_offset);
     }

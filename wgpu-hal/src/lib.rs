@@ -1168,8 +1168,9 @@ pub trait Device: WasmNotSendSync {
         >,
     ) -> Result<<Self::A as Api>::RayTracingPipeline, PipelineError>;
     unsafe fn destroy_ray_tracing_pipeline(&self, pipeline: <Self::A as Api>::RayTracingPipeline);
-    /// Obtain the opaque data from each group, behaves as if group 0 is the ray generation, group 1
-    /// is the miss shader, and group 2.. are the intersection groups.
+    /// Obtain the opaque data from each group, behaves as if group 0 is the ray generation, groups
+    /// 1..=M are the miss shaders, the next ones the intersection groups, and the last ones the
+    /// callable shaders.
     unsafe fn get_raytracing_pipeline_group_data(
         &self,
         pipeline: &<Self::A as Api>::RayTracingPipeline,
@@ -1271,7 +1272,8 @@ pub trait Device: WasmNotSendSync {
     );
     /// Converts the `TlasInstance` into a implementation defined format, appending it to
     /// `to_extend`. The vector must be have a length exactly the old length plus
-    /// `Alignments::raw_tlas_instance_size`
+    /// `Alignments::raw_tlas_instance_size`, or `Alignments::raw_tlas_motion_instance_size`
+    /// for an instance with an end transform.
     fn tlas_instance_to_bytes(&self, instance: TlasInstance, to_extend: &mut Vec<u8>);
 
     fn get_internal_counters(&self) -> wgt::HalCounters;
@@ -1936,6 +1938,7 @@ pub trait CommandEncoder: WasmNotSendSync + fmt::Debug {
         ray_generation_group_data: PipelineGroupData<'a, <Self::A as Api>::Buffer>,
         miss_group_data: PipelineGroupData<'a, <Self::A as Api>::Buffer>,
         intersection_group_data: PipelineGroupData<'a, <Self::A as Api>::Buffer>,
+        callable_group_data: PipelineGroupData<'a, <Self::A as Api>::Buffer>,
     );
 
     /// Like [`trace_rays`], with the launch's width, height and depth read
@@ -1952,6 +1955,7 @@ pub trait CommandEncoder: WasmNotSendSync + fmt::Debug {
         ray_generation_group_data: PipelineGroupData<'a, <Self::A as Api>::Buffer>,
         miss_group_data: PipelineGroupData<'a, <Self::A as Api>::Buffer>,
         intersection_group_data: PipelineGroupData<'a, <Self::A as Api>::Buffer>,
+        callable_group_data: PipelineGroupData<'a, <Self::A as Api>::Buffer>,
         buffer: &'a <Self::A as Api>::Buffer,
         offset: wgt::BufferAddress,
     );
@@ -2193,6 +2197,9 @@ pub struct Alignments {
 
     /// The size of the raw TLAS instance
     pub raw_tlas_instance_size: u32,
+
+    /// The size of the raw instance of a TLAS that moves, 0 if none can.
+    pub raw_tlas_motion_instance_size: u32,
 
     /// What the scratch buffer for building an acceleration structure must be aligned to
     pub ray_tracing_scratch_buffer_alignment: u32,
@@ -2783,10 +2790,16 @@ pub struct RenderPipelineDescriptor<
     pub cache: Option<&'a Pc>,
 }
 
+/// A hit group: the stages a hit on an instance whose intersection index
+/// names it calls.
 #[derive(Clone, Debug)]
 pub struct RayObjectIntersectionState<'a, M: DynShaderModule + ?Sized> {
-    pub closest_hit: ProgrammableStage<'a, M>,
+    pub closest_hit: Option<ProgrammableStage<'a, M>>,
     pub any_hit: Option<ProgrammableStage<'a, M>>,
+    /// The stage that tests a ray against the box of a procedural primitive:
+    /// `Some` for a group of axis-aligned bounding box geometry, `None` for
+    /// one of triangles.
+    pub intersection: Option<ProgrammableStage<'a, M>>,
 }
 
 /// Describes a ray tracing pipeline.
@@ -2807,6 +2820,11 @@ pub struct RayTracingPipelineDescriptor<
     pub misses: &'a [ProgrammableStage<'a, M>],
     /// All the object intersection stages.
     pub intersection: &'a [RayObjectIntersectionState<'a, M>],
+    /// The callable stages, which `executeCallable` runs by index.
+    pub callables: &'a [ProgrammableStage<'a, M>],
+    /// The greatest geometry stride a trace may give: the most hit groups
+    /// one geometry of a mesh may be from the next.
+    pub max_geometry_stride: u32,
     /// The maximum recursion depth allowed for the ray tracing (ray_generation shader counts as depth 0).
     pub max_recursion_depth: u32,
     /// The cache which will be used and filled when compiling this pipeline
@@ -3079,6 +3097,14 @@ pub struct AccelerationStructureDescriptor<'a> {
     /// Backends may allocate the structure as a short-lived resource, since it is
     /// usually replaced by its compacted copy.
     pub allow_compaction: bool,
+    /// The structure is built with [`wgt::AccelerationStructureFlags::ALLOW_MOTION`].
+    pub allow_motion: bool,
+    /// The most instances a top level structure holds; 0 for a bottom level one.
+    pub max_instances: u32,
+    /// The usage of each of a bottom level structure's triangle geometries'
+    /// opacity micromaps, those of the geometries that have one, in order:
+    /// the structure keeps a micromap of its own for each, built with it.
+    pub opacity_micromaps: &'a [&'a [wgt::OpacityMicromapUsage]],
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -3153,6 +3179,32 @@ pub struct AccelerationStructureTriangles<'a, B: DynBuffer + ?Sized> {
     pub indices: Option<AccelerationStructureTriangleIndices<'a, B>>,
     pub transform: Option<AccelerationStructureTriangleTransform<'a, B>>,
     pub flags: AccelerationStructureGeometryFlags,
+    /// In a structure that moves, the vertices where the triangles end, laid
+    /// out as `vertex_buffer`'s are from `first_vertex` on.
+    pub end_vertex_buffer: Option<&'a B>,
+    /// The triangles' opacity micromap, built into the structure's own before
+    /// the structure.
+    pub opacity_micromap: Option<AccelerationStructureOpacityMicromap<'a, B>>,
+}
+
+/// An opacity micromap of a triangle geometry: its buffers are `None` where
+/// only sizes are asked for.
+#[derive(Clone, Debug)]
+pub struct AccelerationStructureOpacityMicromap<'a, B: DynBuffer + ?Sized> {
+    /// The micro-triangles' states, packed from each byte's least
+    /// significant bit.
+    pub data: Option<&'a B>,
+    pub data_offset: wgt::BufferAddress,
+    /// The micromap's triangles, 8 bytes each: the byte offset of its
+    /// states in `data` (`u32`), its subdivision level (`u16`), its format
+    /// (`u16`).
+    pub triangles: Option<&'a B>,
+    pub triangles_offset: wgt::BufferAddress,
+    /// Which micromap triangle each of the geometry's triangles uses, an
+    /// `i32`, or a special index (-1 transparent, -2 opaque, -3 unknown and
+    /// transparent, -4 unknown and opaque); without them, its own index.
+    pub indices: Option<(&'a B, wgt::BufferAddress)>,
+    pub usage: &'a [wgt::OpacityMicromapUsage],
 }
 
 /// * `offset` - offset in bytes
@@ -3230,6 +3282,12 @@ pub struct TlasInstance {
     /// The offset for the index into the intersection hit
     /// group calculation. Number is in hit groups.
     pub pipeline_intersection_data_offset: u32,
+    /// How rays treat the instance. The bits are those of Vulkan's,
+    /// DirectX's and Metal's own instance flags alike.
+    pub flags: wgt::TlasInstanceFlags,
+    /// Where the instance ends, in a structure that moves: every instance of
+    /// one has an end transform, and only those of one.
+    pub end_transform: Option<[f32; 12]>,
 }
 
 #[cfg(dx12)]

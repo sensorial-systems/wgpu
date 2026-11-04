@@ -531,6 +531,7 @@ fn build_with_transform(ctx: TestingContext) {
         index_format: None,
         index_count: None,
         flags: AccelerationStructureGeometryFlags::empty(),
+        opacity_micromap: Vec::new(),
     };
 
     let blas = ctx.device.create_blas(
@@ -577,6 +578,8 @@ fn build_with_transform(ctx: TestingContext) {
                 first_index: None,
                 transform_buffer: Some(&transform),
                 transform_buffer_offset: Some(0),
+                end_vertex_buffer: None,
+                opacity_micromap: None,
             }]),
         }],
         [&tlas],
@@ -805,6 +808,7 @@ fn test_as_build_format_stride(
         index_format: None,
         index_count: None,
         flags: wgpu::AccelerationStructureGeometryFlags::empty(),
+        opacity_micromap: Vec::new(),
     };
 
     let blas = ctx.device.create_blas(
@@ -835,6 +839,8 @@ fn test_as_build_format_stride(
                 first_index: None,
                 transform_buffer: None,
                 transform_buffer_offset: None,
+                end_vertex_buffer: None,
+                opacity_micromap: None,
             }]),
         }],
         &[],
@@ -867,6 +873,7 @@ fn blas_first_vertex(ctx: TestingContext) {
         index_format: None,
         index_count: None,
         flags: AccelerationStructureGeometryFlags::empty(),
+        opacity_micromap: Vec::new(),
     };
 
     let blas = ctx.device.create_blas(
@@ -903,6 +910,8 @@ fn blas_first_vertex(ctx: TestingContext) {
             first_index: None,
             transform_buffer: None,
             transform_buffer_offset: None,
+            end_vertex_buffer: None,
+            opacity_micromap: None,
         }]),
     };
 

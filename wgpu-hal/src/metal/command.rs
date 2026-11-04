@@ -1949,6 +1949,7 @@ impl crate::CommandEncoder for super::CommandEncoder {
         _ray_generation_group_data: crate::PipelineGroupData<super::Buffer>,
         _miss_group_data: crate::PipelineGroupData<super::Buffer>,
         _intersection_group_data: crate::PipelineGroupData<super::Buffer>,
+        _callable_group_data: crate::PipelineGroupData<super::Buffer>,
     ) {
         unreachable!("Ray tracing pipelines not supported")
     }
@@ -1958,6 +1959,7 @@ impl crate::CommandEncoder for super::CommandEncoder {
         _ray_generation_group_data: crate::PipelineGroupData<super::Buffer>,
         _miss_group_data: crate::PipelineGroupData<super::Buffer>,
         _intersection_group_data: crate::PipelineGroupData<super::Buffer>,
+        _callable_group_data: crate::PipelineGroupData<super::Buffer>,
         _buffer: &super::Buffer,
         _offset: wgt::BufferAddress,
     ) {

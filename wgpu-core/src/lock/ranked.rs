@@ -80,7 +80,9 @@ pub struct Mutex<T> {
 /// For details, see [the module documentation][self].
 pub struct MutexGuard<'a, T> {
     inner: wgpu_sync::MutexGuard<'a, T>,
-    #[cfg_attr(not(miri), expect(unused))] // but `Drop` has important side effects
+    // Where locks are not validated, the module allows dead code already.
+    #[cfg_attr(all(not(miri), wgpu_validate_locks), expect(unused))]
+    // but `Drop` has important side effects
     saved: LockStateGuard,
 }
 
@@ -290,7 +292,9 @@ pub struct RwLockReadGuard<'a, T> {
 /// For details, see [the module documentation][self].
 pub struct RwLockWriteGuard<'a, T> {
     inner: wgpu_sync::RwLockWriteGuard<'a, T>,
-    #[cfg_attr(not(miri), expect(unused))] // but `Drop` has important side effects
+    // Where locks are not validated, the module allows dead code already.
+    #[cfg_attr(all(not(miri), wgpu_validate_locks), expect(unused))]
+    // but `Drop` has important side effects
     saved: LockStateGuard,
 }
 

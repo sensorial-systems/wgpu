@@ -501,6 +501,8 @@ impl<A: hal::Api> Example<A> {
 
             transform: None,
             flags: hal::AccelerationStructureGeometryFlags::OPAQUE,
+            end_vertex_buffer: None,
+            opacity_micromap: None,
         }];
         let blas_entries = hal::AccelerationStructureEntries::Triangles(blas_triangles);
 
@@ -519,6 +521,9 @@ impl<A: hal::Api> Example<A> {
                 size: blas_sizes.acceleration_structure_size,
                 format: hal::AccelerationStructureFormat::BottomLevel,
                 allow_compaction: false,
+                allow_motion: false,
+                max_instances: 0,
+                opacity_micromaps: &[],
             })
         }
         .unwrap();
@@ -614,6 +619,9 @@ impl<A: hal::Api> Example<A> {
                 size: tlas_sizes.acceleration_structure_size,
                 format: hal::AccelerationStructureFormat::TopLevel,
                 allow_compaction: false,
+                allow_motion: false,
+                max_instances: 1,
+                opacity_micromaps: &[],
             })
         }
         .unwrap();

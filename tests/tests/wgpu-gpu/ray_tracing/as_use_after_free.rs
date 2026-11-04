@@ -39,6 +39,7 @@ fn acceleration_structure_use_after_free(ctx: TestingContext) {
         index_format: None,
         index_count: None,
         flags: AccelerationStructureGeometryFlags::empty(),
+        opacity_micromap: Vec::new(),
     };
 
     let blas = ctx.device.create_blas(
@@ -83,6 +84,8 @@ fn acceleration_structure_use_after_free(ctx: TestingContext) {
                 first_index: None,
                 transform_buffer: None,
                 transform_buffer_offset: None,
+                end_vertex_buffer: None,
+                opacity_micromap: None,
             }]),
         }),
         iter::empty(),

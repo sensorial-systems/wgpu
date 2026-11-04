@@ -3718,6 +3718,9 @@ crate::impl_trackable!(Blas);
 pub(crate) struct TlasIntersectionType {
     pub(crate) index: u32,
     pub(crate) required_intersection_ty: crate::ray_tracing_pipeline::RayTracingIntersectionType,
+    /// The geometries of the instance's bottom level structure, which a
+    /// trace's geometry stride steps through hit groups by.
+    pub(crate) geometries: u32,
 }
 
 #[derive(Debug)]

@@ -869,6 +869,12 @@ pub fn map_shader_stage(stage: wgt::ShaderStages) -> vk::ShaderStageFlags {
     if stage.contains(wgt::ShaderStages::CLOSEST_HIT) {
         flags |= vk::ShaderStageFlags::CLOSEST_HIT_KHR;
     }
+    if stage.contains(wgt::ShaderStages::INTERSECTION) {
+        flags |= vk::ShaderStageFlags::INTERSECTION_KHR;
+    }
+    if stage.contains(wgt::ShaderStages::CALLABLE) {
+        flags |= vk::ShaderStageFlags::CALLABLE_KHR;
+    }
     flags
 }
 
@@ -1078,6 +1084,10 @@ pub fn map_acceleration_structure_flags(
 
     if flags.contains(crate::AccelerationStructureBuildFlags::ALLOW_RAY_HIT_VERTEX_RETURN) {
         vk_flags |= vk::BuildAccelerationStructureFlagsKHR::ALLOW_DATA_ACCESS
+    }
+
+    if flags.contains(crate::AccelerationStructureBuildFlags::ALLOW_MOTION) {
+        vk_flags |= vk::BuildAccelerationStructureFlagsKHR::MOTION_NV
     }
 
     vk_flags

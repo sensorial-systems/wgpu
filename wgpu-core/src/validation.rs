@@ -227,6 +227,9 @@ enum BuiltIn {
     WorldToObject,
     HitKind,
     HitBarycentrics,
+    IncomingRayFlags,
+    HitTriangleVertexPositions,
+    CurrentRayTime,
 }
 
 impl BuiltIn {
@@ -284,6 +287,9 @@ impl BuiltIn {
             Self::WorldToObject => naga::BuiltIn::WorldToObject,
             Self::HitKind => naga::BuiltIn::HitKind,
             Self::HitBarycentrics => naga::BuiltIn::HitBarycentrics,
+            Self::IncomingRayFlags => naga::BuiltIn::IncomingRayFlags,
+            Self::HitTriangleVertexPositions => naga::BuiltIn::HitTriangleVertexPositions,
+            Self::CurrentRayTime => naga::BuiltIn::CurrentRayTime,
         }
     }
 }
@@ -358,6 +364,12 @@ struct EntryPoint {
 
     /// The payload for ray tracing, if this is a ray tracing stage.
     ray_tracing_payload: Option<RayTracingPayloadType>,
+
+    /// The procedural hit attributes the stage writes or reads, if any.
+    hit_attribute: Option<RayTracingPayloadType>,
+
+    /// Whether the stage reads a triangle hit's barycentrics.
+    reads_barycentrics: bool,
 }
 
 #[derive(Debug, Hash, PartialEq, Eq)]
@@ -1295,6 +1307,12 @@ pub struct StageIo {
     /// This is `None` if the prior stage was not a mesh shader.
     pub primitive_index: Option<bool>,
     pub ray_tracing_payload: Option<RayTracingPayloadType>,
+
+    /// The procedural hit attributes the last stage writes or reads.
+    pub hit_attribute: Option<RayTracingPayloadType>,
+
+    /// Whether the last stage reads a triangle hit's barycentrics.
+    pub reads_barycentrics: bool,
 }
 
 impl Interface {
@@ -1440,6 +1458,9 @@ impl Interface {
                 naga::BuiltIn::WorldToObject => BuiltIn::WorldToObject,
                 naga::BuiltIn::HitKind => BuiltIn::HitKind,
                 naga::BuiltIn::HitBarycentrics => BuiltIn::HitBarycentrics,
+                naga::BuiltIn::IncomingRayFlags => BuiltIn::IncomingRayFlags,
+                naga::BuiltIn::HitTriangleVertexPositions => BuiltIn::HitTriangleVertexPositions,
+                naga::BuiltIn::CurrentRayTime => BuiltIn::CurrentRayTime,
             }),
             None => {
                 log::error!("Missing binding for a varying");
@@ -1581,6 +1602,28 @@ impl Interface {
                     &module.types,
                 );
             }
+
+            for (handle, gv) in module.global_variables.iter() {
+                if !func_info[handle].is_empty() && gv.space == naga::AddressSpace::RayHitAttribute
+                {
+                    ep.hit_attribute = Some(
+                        RayTracingPayloadType::from_naga(&module.types[gv.ty].inner, module)
+                            .expect("naga should already validate invalid hit attributes out!"),
+                    );
+                }
+            }
+            let barycentrics = |binding: Option<&naga::Binding>| {
+                binding == Some(&naga::Binding::BuiltIn(naga::BuiltIn::HitBarycentrics))
+            };
+            ep.reads_barycentrics = entry_point.function.arguments.iter().any(|argument| {
+                barycentrics(argument.binding.as_ref())
+                    || match module.types[argument.ty].inner {
+                        naga::TypeInner::Struct { ref members, .. } => members
+                            .iter()
+                            .any(|member| barycentrics(member.binding.as_ref())),
+                        _ => false,
+                    }
+            });
 
             // Set the payload if there is an incoming payload set and it is a shader that should have one.
             if matches!(
@@ -1893,7 +1936,9 @@ impl Interface {
                                 naga::ShaderStage::RayGeneration
                                 | naga::ShaderStage::AnyHit
                                 | naga::ShaderStage::ClosestHit
-                                | naga::ShaderStage::Miss => {
+                                | naga::ShaderStage::Miss
+                                | naga::ShaderStage::Intersection
+                                | naga::ShaderStage::Callable => {
                                     unreachable!()
                                 }
                             };
@@ -2225,6 +2270,8 @@ impl Interface {
                 None
             },
             ray_tracing_payload,
+            hit_attribute: entry_point.hit_attribute.clone(),
+            reads_barycentrics: entry_point.reads_barycentrics,
         })
     }
 }
@@ -2365,6 +2412,8 @@ pub enum ShaderStageForValidation {
     AnyHit {
         triangle: bool,
     },
+    Intersection,
+    Callable,
 }
 
 impl ShaderStageForValidation {
@@ -2379,6 +2428,8 @@ impl ShaderStageForValidation {
             Self::Miss => naga::ShaderStage::Miss,
             Self::AnyHit { .. } => naga::ShaderStage::AnyHit,
             Self::ClosestHit { .. } => naga::ShaderStage::ClosestHit,
+            Self::Intersection => naga::ShaderStage::Intersection,
+            Self::Callable => naga::ShaderStage::Callable,
         }
     }
 
@@ -2393,6 +2444,8 @@ impl ShaderStageForValidation {
             Self::Miss => wgt::ShaderStages::MISS,
             Self::AnyHit { .. } => wgt::ShaderStages::ANY_HIT,
             Self::ClosestHit { .. } => wgt::ShaderStages::CLOSEST_HIT,
+            Self::Intersection => wgt::ShaderStages::INTERSECTION,
+            Self::Callable => wgt::ShaderStages::CALLABLE,
         }
     }
 }

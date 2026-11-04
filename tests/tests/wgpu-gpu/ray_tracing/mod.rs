@@ -16,7 +16,10 @@ mod as_build;
 mod as_create;
 mod as_use_after_free;
 mod limits;
+mod micromap;
+mod motion;
 mod pipelines;
+mod reorder;
 mod scene;
 mod shader;
 
@@ -26,9 +29,12 @@ pub fn all_tests(tests: &mut Vec<wgpu_test::GpuTestInitializer>) {
     as_create::all_tests(tests);
     as_use_after_free::all_tests(tests);
     limits::all_tests(tests);
+    micromap::all_tests(tests);
+    motion::all_tests(tests);
     scene::all_tests(tests);
     shader::all_tests(tests);
     pipelines::all_tests(tests);
+    reorder::all_tests(tests);
 }
 
 fn acceleration_structure_limits() -> wgpu::Limits {
@@ -61,6 +67,7 @@ impl AsBuildContext {
             index_format: None,
             index_count: None,
             flags: AccelerationStructureGeometryFlags::empty(),
+            opacity_micromap: Vec::new(),
         };
 
         let blas = ctx.device.create_blas(
@@ -109,6 +116,8 @@ impl AsBuildContext {
                 first_index: None,
                 transform_buffer: None,
                 transform_buffer_offset: None,
+                end_vertex_buffer: None,
+                opacity_micromap: None,
             }]),
         }
     }

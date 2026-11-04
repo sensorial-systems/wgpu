@@ -43,6 +43,7 @@ fn acceleration_structure_build(ctx: &TestingContext, use_index_buffer: bool) {
         index_format: use_index_buffer.then_some(index_format),
         index_count: use_index_buffer.then_some(index_count),
         flags: wgpu::AccelerationStructureGeometryFlags::OPAQUE,
+        opacity_micromap: Vec::new(),
     };
 
     let blas = device.create_blas(
@@ -95,6 +96,8 @@ fn acceleration_structure_build(ctx: &TestingContext, use_index_buffer: bool) {
                 first_index: use_index_buffer.then_some(0),
                 transform_buffer: None,
                 transform_buffer_offset: None,
+                end_vertex_buffer: None,
+                opacity_micromap: None,
             }]),
         }),
         iter::once(&tlas),

@@ -111,7 +111,9 @@ impl CompilationContext<'_> {
                 | naga::ShaderStage::RayGeneration
                 | naga::ShaderStage::AnyHit
                 | naga::ShaderStage::ClosestHit
-                | naga::ShaderStage::Miss => unreachable!(),
+                | naga::ShaderStage::Miss
+                | naga::ShaderStage::Intersection
+                | naga::ShaderStage::Callable => unreachable!(),
             }
         }
 
@@ -326,7 +328,9 @@ impl super::Device {
             | naga::ShaderStage::RayGeneration
             | naga::ShaderStage::AnyHit
             | naga::ShaderStage::ClosestHit
-            | naga::ShaderStage::Miss => unreachable!(),
+            | naga::ShaderStage::Miss
+            | naga::ShaderStage::Intersection
+            | naga::ShaderStage::Callable => unreachable!(),
         };
 
         let raw = unsafe { gl.create_shader(target) }.unwrap();

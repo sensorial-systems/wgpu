@@ -159,6 +159,8 @@ fn pipeline_create_use(ctx: TestingContext) {
                     }),
                 },
             ],
+            callables: &[],
+            max_geometry_stride: 0,
             max_recursion_depth: 1,
             cache: None,
         });
@@ -322,6 +324,8 @@ fn pipeline_output(ctx: TestingContext) {
                 compilation_options: Default::default(),
             }],
             intersections: &[],
+            callables: &[],
+            max_geometry_stride: 0,
             max_recursion_depth: 1,
             cache: None,
         });
@@ -525,6 +529,8 @@ fn pipeline_swap(ctx: TestingContext) {
                     compilation_options: Default::default(),
                 }),
             }],
+            callables: &[],
+            max_geometry_stride: 0,
             max_recursion_depth: 1,
             cache: None,
         });
@@ -545,6 +551,8 @@ fn pipeline_swap(ctx: TestingContext) {
                 compilation_options: Default::default(),
             }],
             intersections: &[],
+            callables: &[],
+            max_geometry_stride: 0,
             max_recursion_depth: 1,
             cache: None,
         });
@@ -760,6 +768,8 @@ fn mismatched_intersection_types(ctx: TestingContext) {
                     }),
                 },
             ],
+            callables: &[],
+            max_geometry_stride: 0,
             max_recursion_depth: 1,
             cache: None,
         });
@@ -871,6 +881,8 @@ fn empty_pipeline_use(ctx: TestingContext) {
                 compilation_options: Default::default(),
             }],
             intersections: &[],
+            callables: &[],
+            max_geometry_stride: 0,
             max_recursion_depth: 1,
             cache: None,
         });

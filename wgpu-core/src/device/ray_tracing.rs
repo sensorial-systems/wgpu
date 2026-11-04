@@ -23,6 +23,30 @@ use crate::{
 use hal::AccelerationStructureTriangleIndices;
 use wgt::{Features, AABB_GEOMETRY_MIN_STRIDE};
 
+/// Compile a stage of a hit group, with the hit attribute it reads or
+/// writes and whether it reads a triangle's barycentrics.
+fn compile_hit_group_stage<'a, 'd: 'a>(
+    compiler: &mut StageCompiler<'d>,
+    desc: &'a crate::pipeline::ProgrammableStageDescriptor<'_>,
+    stage: crate::validation::ShaderStageForValidation,
+) -> Result<
+    (
+        crate::device::stage_compiler::CompiledStage<'a>,
+        Option<crate::validation::RayTracingPayloadType>,
+        bool,
+    ),
+    CreatePipelineError,
+> {
+    compiler.io.hit_attribute = None;
+    compiler.io.reads_barycentrics = false;
+    let compiled = compiler.compile(desc, stage)?;
+    Ok((
+        compiled,
+        compiler.io.hit_attribute.take(),
+        compiler.io.reads_barycentrics,
+    ))
+}
+
 impl Device {
     /// Requires any feature that allows acceleration structures as they can be provided by multiple extensions.
     pub fn require_acceleration_structures(&self) -> Result<(), crate::device::MissingFeatures> {
@@ -68,6 +92,32 @@ impl Device {
             .contains(wgt::AccelerationStructureFlags::ALLOW_RAY_HIT_VERTEX_RETURN)
         {
             self.require_features(Features::EXPERIMENTAL_RAY_HIT_VERTEX_RETURN)?;
+        }
+        let moves = blas_desc
+            .flags
+            .contains(wgt::AccelerationStructureFlags::ALLOW_MOTION);
+        if moves {
+            self.require_features(Features::EXPERIMENTAL_RAY_TRACING_MOTION_BLUR)?;
+        }
+        // The opacity micromaps' usage, of the geometries that have one: the
+        // structure keeps a micromap for each, which a compacted copy would
+        // not.
+        let opacity_micromaps: Vec<&[wgt::OpacityMicromapUsage]> = match sizes {
+            wgt::BlasGeometrySizeDescriptors::Triangles { ref descriptors } => descriptors
+                .iter()
+                .filter(|desc| !desc.opacity_micromap.is_empty())
+                .map(|desc| &desc.opacity_micromap[..])
+                .collect(),
+            wgt::BlasGeometrySizeDescriptors::AABBs { .. } => Vec::new(),
+        };
+        if !opacity_micromaps.is_empty() {
+            self.require_features(Features::EXPERIMENTAL_RAY_TRACING_OPACITY_MICROMAP)?;
+            if blas_desc
+                .flags
+                .contains(wgt::AccelerationStructureFlags::ALLOW_COMPACTION)
+            {
+                return Err(CreateBlasError::OpacityMicromapCompaction);
+            }
         }
 
         let size_info = match &sizes {
@@ -127,6 +177,17 @@ impl Device {
                         ));
                     }
 
+                    let opacity_micromap = (!desc.opacity_micromap.is_empty()).then(|| {
+                        hal::AccelerationStructureOpacityMicromap {
+                            data: None,
+                            data_offset: 0,
+                            triangles: None,
+                            triangles_offset: 0,
+                            indices: None,
+                            usage: &desc.opacity_micromap[..],
+                        }
+                    });
+
                     entries.push(hal::AccelerationStructureTriangles::<dyn hal::DynBuffer> {
                         vertex_buffer: Some(self.zero_buffer.as_ref()),
                         vertex_format: desc.vertex_format,
@@ -136,6 +197,8 @@ impl Device {
                         indices,
                         transform,
                         flags: desc.flags,
+                        end_vertex_buffer: moves.then_some(self.zero_buffer.as_ref()),
+                        opacity_micromap,
                     });
                 }
                 unsafe {
@@ -195,6 +258,9 @@ impl Device {
                     allow_compaction: blas_desc
                         .flags
                         .contains(wgpu_types::AccelerationStructureFlags::ALLOW_COMPACTION),
+                    allow_motion: moves,
+                    max_instances: 0,
+                    opacity_micromaps: &opacity_micromaps,
                 })
         }
         .map_err(|e| self.handle_hal_error_with_nonfatal_oom(e))?;
@@ -295,6 +361,12 @@ impl Device {
         {
             self.require_features(Features::EXPERIMENTAL_RAY_HIT_VERTEX_RETURN)?;
         }
+        let moves = desc
+            .flags
+            .contains(wgt::AccelerationStructureFlags::ALLOW_MOTION);
+        if moves {
+            self.require_features(Features::EXPERIMENTAL_RAY_TRACING_MOTION_BLUR)?;
+        }
 
         let size_info = unsafe {
             self.raw().get_acceleration_structure_build_sizes(
@@ -318,13 +390,18 @@ impl Device {
                     size: size_info.acceleration_structure_size,
                     format: hal::AccelerationStructureFormat::TopLevel,
                     allow_compaction: false,
+                    allow_motion: moves,
+                    max_instances: desc.max_instances,
+                    opacity_micromaps: &[],
                 })
         }
         .map_err(|e| self.handle_hal_error_with_nonfatal_oom(e))?;
 
-        let instance_buffer_size = self
-            .alignments
-            .raw_tlas_instance_size
+        let raw_instance_size = match moves {
+            true => self.alignments.raw_tlas_motion_instance_size,
+            false => self.alignments.raw_tlas_instance_size,
+        };
+        let instance_buffer_size = raw_instance_size
             .checked_mul(desc.max_instances.max(1))
             .expect("max_tlas_instance_count should not allow excessive buffer size");
         let (instance_buffer, _) = unsafe {
@@ -438,6 +515,24 @@ impl Device {
             );
         }
 
+        if desc.callables.len() > 1 << 24 {
+            return Err(
+                ray_tracing_pipeline::RayTracingPipelineError::TooManyCallables(
+                    desc.callables.len(),
+                )
+                .into(),
+            );
+        }
+
+        if desc.max_geometry_stride > 1 << 24 {
+            return Err(
+                ray_tracing_pipeline::RayTracingPipelineError::TooHighGeometryStride(
+                    desc.max_geometry_stride,
+                )
+                .into(),
+            );
+        }
+
         if desc.max_recursion_depth > self.limits.max_ray_recursion_depth {
             return Err(
                 ray_tracing_pipeline::RayTracingPipelineError::TooHighRayRecursionDepth(
@@ -451,38 +546,102 @@ impl Device {
         let mut intersections = Vec::with_capacity(desc.intersections.len());
         let mut compiled_intersections = Vec::with_capacity(desc.intersections.len());
 
-        for intersection in &desc.intersections {
-            match intersection {
+        for (group, intersection) in desc.intersections.iter().enumerate() {
+            let (closest_hit, any_hit, intersection, triangle) = match intersection {
                 ray_tracing_pipeline::RayTracingIntersectionDescriptor::Triangle {
                     closest_hit,
                     any_hit,
-                } => {
-                    let closest_hit = {
-                        let stage =
-                            validation::ShaderStageForValidation::ClosestHit { triangle: true };
+                } => (Some(closest_hit), any_hit.as_ref(), None, true),
+                ray_tracing_pipeline::RayTracingIntersectionDescriptor::Procedural {
+                    intersection,
+                    closest_hit,
+                    any_hit,
+                } => (
+                    closest_hit.as_ref(),
+                    any_hit.as_ref(),
+                    Some(intersection),
+                    false,
+                ),
+            };
 
-                        compiler.compile(closest_hit, stage)?
-                    };
-
-                    let any_hit = match any_hit {
-                        Some(any_hit) => {
-                            let stage =
-                                validation::ShaderStageForValidation::AnyHit { triangle: true };
-
-                            Some(compiler.compile(any_hit, stage)?)
-                        }
-                        None => None,
-                    };
-
-                    compiled_intersections.push((closest_hit, any_hit));
+            // The hit attribute a group's intersection stage writes is the
+            // one its other stages read: barycentrics for triangles.
+            let intersection = intersection
+                .map(|desc| {
+                    compile_hit_group_stage(
+                        &mut compiler,
+                        desc,
+                        validation::ShaderStageForValidation::Intersection,
+                    )
+                })
+                .transpose()?;
+            let written = intersection
+                .as_ref()
+                .and_then(|(_, attribute, _)| attribute.clone());
+            let mut hit_stages = [None, None];
+            for (slot, desc, stage) in [
+                (
+                    0,
+                    closest_hit,
+                    validation::ShaderStageForValidation::ClosestHit { triangle },
+                ),
+                (
+                    1,
+                    any_hit,
+                    validation::ShaderStageForValidation::AnyHit { triangle },
+                ),
+            ] {
+                let Some(desc) = desc else {
+                    continue;
+                };
+                let naga_stage = stage.to_naga();
+                let (compiled, attribute, barycentrics) =
+                    compile_hit_group_stage(&mut compiler, desc, stage)?;
+                let error = match (triangle, attribute) {
+                    (true, Some(_)) => Some(
+                        ray_tracing_pipeline::RayTracingPipelineError::HitAttributeOfTriangles(
+                            group, naga_stage,
+                        ),
+                    ),
+                    (false, _) if barycentrics => Some(
+                        ray_tracing_pipeline::RayTracingPipelineError::BarycentricsOfProcedural(
+                            group, naga_stage,
+                        ),
+                    ),
+                    (false, Some(read)) if Some(&read) != written.as_ref() => Some(
+                        ray_tracing_pipeline::RayTracingPipelineError::HitAttributeMismatch(
+                            group, naga_stage,
+                        ),
+                    ),
+                    _ => None,
+                };
+                if let Some(error) = error {
+                    return Err(error.into());
                 }
+                hit_stages[slot] = Some(compiled);
             }
+            let [closest_hit, any_hit] = hit_stages;
+
+            compiled_intersections.push((
+                closest_hit,
+                any_hit,
+                intersection.map(|(compiled, _, _)| compiled),
+            ));
         }
 
-        for (closest_hit, any_hit) in compiled_intersections.iter() {
+        let compiled_callables = desc
+            .callables
+            .iter()
+            .map(|callable| {
+                compiler.compile(callable, validation::ShaderStageForValidation::Callable)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        for (closest_hit, any_hit, intersection) in compiled_intersections.iter() {
             intersections.push(hal::RayObjectIntersectionState {
-                closest_hit: closest_hit.to_hal(),
+                closest_hit: closest_hit.as_ref().map(|closest| closest.to_hal()),
                 any_hit: any_hit.as_ref().map(|any| any.to_hal()),
+                intersection: intersection.as_ref().map(|stage| stage.to_hal()),
             });
         }
 
@@ -510,12 +669,18 @@ impl Device {
 
         let raw = {
             let misses: Vec<_> = misses.iter().map(|miss| miss.to_hal()).collect();
+            let callables: Vec<_> = compiled_callables
+                .iter()
+                .map(|callable| callable.to_hal())
+                .collect();
             let pipeline_desc = hal::RayTracingPipelineDescriptor {
                 label: desc.label.to_hal(self.instance_flags),
                 layout: pipeline_layout.raw()?,
                 ray_generation: ray_generation.to_hal(),
                 misses: &misses,
                 intersection: &intersections,
+                callables: &callables,
+                max_geometry_stride: desc.max_geometry_stride,
                 max_recursion_depth: desc.max_recursion_depth,
                 cache: cache.as_ref().map(|it| it.raw()).transpose()?,
             };
@@ -557,8 +722,20 @@ impl Device {
                         intersection_types
                             .push(ray_tracing_pipeline::RayTracingIntersectionType::Triangle);
                     }
+                    ray_tracing_pipeline::RayTracingIntersectionDescriptor::Procedural {
+                        intersection,
+                        closest_hit,
+                        any_hit,
+                    } => {
+                        shader_modules.push(intersection.module.clone());
+                        shader_modules.extend(closest_hit.iter().map(|stage| stage.module.clone()));
+                        shader_modules.extend(any_hit.iter().map(|stage| stage.module.clone()));
+                        intersection_types
+                            .push(ray_tracing_pipeline::RayTracingIntersectionType::AABB);
+                    }
                 }
             }
+            shader_modules.extend(desc.callables.iter().map(|stage| stage.module.clone()));
             (
                 shader_modules,
                 Arc::from(intersection_types.into_boxed_slice()),
@@ -572,6 +749,7 @@ impl Device {
             raw.as_ref(),
             desc.misses.len(),
             desc.intersections.len(),
+            desc.callables.len(),
         ) {
             Ok(sbd) => sbd,
             Err(e) => {
@@ -596,6 +774,7 @@ impl Device {
                 _shader_modules: shader_modules,
                 shader_binding_data,
                 intersection_types,
+                max_geometry_stride: desc.max_geometry_stride,
             }),
             device: self.clone(),
             late_sized_buffer_groups,

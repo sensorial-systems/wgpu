@@ -47,6 +47,8 @@ pub enum CreateBlasError {
         "Limit `max_blas_primitive_count` is {0}, but the BLAS had a maximum of {1} primitives"
     )]
     TooManyPrimitives(u32, u32),
+    #[error("A BLAS with opacity micromaps is not compacted: it was created allowing compaction")]
+    OpacityMicromapCompaction,
 }
 
 impl WebGpuError for CreateBlasError {
@@ -57,7 +59,8 @@ impl WebGpuError for CreateBlasError {
             Self::MissingIndexData
             | Self::InvalidVertexFormat(..)
             | Self::TooManyGeometries(..)
-            | Self::TooManyPrimitives(..) => ErrorType::Validation,
+            | Self::TooManyPrimitives(..)
+            | Self::OpacityMicromapCompaction => ErrorType::Validation,
         }
     }
 }
@@ -211,6 +214,31 @@ pub enum BuildAccelerationStructureError {
         "Tlas {0:?} instance {1} contains an intersection index {2} which is greater than 2^24 - 1"
     )]
     TlasInvalidIntersectionIndex(ResourceErrorIdent, usize, u32),
+
+    #[error("Blas {0:?} moves: each of its triangle geometries needs its end vertices")]
+    MissingEndVertices(ResourceErrorIdent),
+
+    #[error("Blas {0:?} does not move: its triangle geometries have no end vertices")]
+    EndVerticesWithoutMotion(ResourceErrorIdent),
+
+    #[error("Tlas {0:?} does not move: its instance {1} has no end transform")]
+    EndTransformWithoutMotion(ResourceErrorIdent, usize),
+
+    #[error("Blas {1:?} moves, and is in Tlas {0:?}, which does not")]
+    TlasDependentMoves(ResourceErrorIdent, ResourceErrorIdent),
+
+    #[error("Blas {0:?} was created with an opacity micromap for each of its triangle geometries that has one: one is missing")]
+    MissingOpacityMicromap(ResourceErrorIdent),
+
+    #[error(
+        "Blas {0:?} was created without an opacity micromap for a geometry that is built with one"
+    )]
+    OpacityMicromapWithoutUsage(ResourceErrorIdent),
+
+    #[error(
+        "Blas {0:?} was created with other opacity micromap usage than a geometry is built with"
+    )]
+    IncompatibleOpacityMicromap(ResourceErrorIdent),
 }
 
 impl WebGpuError for BuildAccelerationStructureError {
@@ -245,6 +273,13 @@ impl WebGpuError for BuildAccelerationStructureError {
             | Self::UseTransformMissing(..)
             | Self::TlasDependentMissingVertexReturn(..)
             | Self::TlasInvalidIntersectionIndex(..)
+            | Self::MissingEndVertices(..)
+            | Self::EndVerticesWithoutMotion(..)
+            | Self::EndTransformWithoutMotion(..)
+            | Self::TlasDependentMoves(..)
+            | Self::MissingOpacityMicromap(..)
+            | Self::OpacityMicromapWithoutUsage(..)
+            | Self::IncompatibleOpacityMicromap(..)
             | Self::BlasGeometryKindMismatch(..)
             | Self::IncompatibleBlasAabbPrimitiveCount(..)
             | Self::UnalignedAabbPrimitiveOffset(..)
@@ -302,6 +337,35 @@ pub struct BlasTriangleGeometry<'a, Buffer = Arc<resource::Buffer>> {
     pub vertex_stride: BufferAddress,
     pub first_index: Option<u32>,
     pub transform_buffer_offset: Option<BufferAddress>,
+    pub end_vertex_buffer: Option<Buffer>,
+    pub opacity_micromap: Option<BlasOpacityMicromap<Buffer>>,
+}
+
+/// The buffers an opacity micromap is built from: see
+/// [`hal::AccelerationStructureOpacityMicromap`].
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct BlasOpacityMicromap<Buffer = Arc<resource::Buffer>> {
+    pub data: Buffer,
+    pub data_offset: BufferAddress,
+    pub triangles: Buffer,
+    pub triangles_offset: BufferAddress,
+    pub indices: Option<(Buffer, BufferAddress)>,
+}
+
+impl<Buffer> BlasOpacityMicromap<Buffer> {
+    /// The same micromap, of other buffers.
+    pub fn map<B>(self, mut buffer: impl FnMut(Buffer) -> B) -> BlasOpacityMicromap<B> {
+        BlasOpacityMicromap {
+            data: buffer(self.data),
+            data_offset: self.data_offset,
+            triangles: buffer(self.triangles),
+            triangles_offset: self.triangles_offset,
+            indices: self
+                .indices
+                .map(|(indices, offset)| (buffer(indices), offset)),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -337,6 +401,8 @@ pub struct TlasInstance<'a, Blas = Arc<resource::Blas>> {
     pub custom_data: u32,
     pub mask: u8,
     pub intersection_index: u32,
+    pub flags: wgt::TlasInstanceFlags,
+    pub end_transform: Option<&'a [f32; 12]>,
 }
 
 pub struct TlasPackage<'a, Tlas = Arc<resource::Tlas>, Blas = Arc<resource::Blas>> {
@@ -384,9 +450,14 @@ pub(crate) enum AsAction {
     /// [`RayTracingPipeline`].
     ///
     /// [`RayTracingPipeline`]: crate::ray_tracing_pipeline::RayTracingPipeline
+    ///
+    /// The `u32` is the pipeline's greatest geometry stride: every hit group
+    /// an instance's geometry can reach with it must be in the pipeline and
+    /// of the geometry's type.
     TraceTlas(
         Arc<Tlas>,
         Arc<[crate::ray_tracing_pipeline::RayTracingIntersectionType]>,
+        u32,
     ),
 }
 
@@ -402,6 +473,10 @@ pub struct OwnedBlasTriangleGeometry<R: ReferenceType> {
     pub vertex_stride: BufferAddress,
     pub first_index: Option<u32>,
     pub transform_buffer_offset: Option<BufferAddress>,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub end_vertex_buffer: Option<R::Buffer>,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub opacity_micromap: Option<BlasOpacityMicromap<R::Buffer>>,
 }
 
 pub type ArcBlasTriangleGeometry = OwnedBlasTriangleGeometry<ArcReferences>;
@@ -443,6 +518,10 @@ pub struct OwnedTlasInstance<R: ReferenceType> {
     pub custom_data: u32,
     pub mask: u8,
     pub intersection_index: u32,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub flags: wgt::TlasInstanceFlags,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub end_transform: Option<[f32; 12]>,
 }
 
 pub type ArcTlasInstance = OwnedTlasInstance<ArcReferences>;

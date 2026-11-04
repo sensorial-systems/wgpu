@@ -470,12 +470,25 @@ impl<D: Device + DynResource> DynDevice for D {
             .intersection
             .iter()
             .map(|stage| RayObjectIntersectionState {
-                closest_hit: stage.closest_hit.clone().expect_downcast(),
+                closest_hit: stage
+                    .closest_hit
+                    .as_ref()
+                    .map(|stage| stage.clone().expect_downcast()),
                 any_hit: stage
                     .any_hit
                     .as_ref()
                     .map(|stage| stage.clone().expect_downcast()),
+                intersection: stage
+                    .intersection
+                    .as_ref()
+                    .map(|stage| stage.clone().expect_downcast()),
             })
+            .collect();
+
+        let callables: Vec<_> = desc
+            .callables
+            .iter()
+            .map(|stage| stage.clone().expect_downcast())
             .collect();
 
         let misses: Vec<_> = desc
@@ -490,6 +503,8 @@ impl<D: Device + DynResource> DynDevice for D {
             ray_generation: desc.ray_generation.clone().expect_downcast(),
             misses: &misses,
             intersection: &ray_intersection,
+            callables: &callables,
+            max_geometry_stride: desc.max_geometry_stride,
             max_recursion_depth: desc.max_recursion_depth,
             cache: desc.cache.as_ref().map(|c| c.expect_downcast_ref()),
         };

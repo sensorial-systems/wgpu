@@ -974,7 +974,9 @@ impl<T> ops::Index<naga::ShaderStage> for MultiStageData<T> {
             naga::ShaderStage::RayGeneration
             | naga::ShaderStage::AnyHit
             | naga::ShaderStage::ClosestHit
-            | naga::ShaderStage::Miss => unimplemented!(),
+            | naga::ShaderStage::Miss
+            | naga::ShaderStage::Intersection
+            | naga::ShaderStage::Callable => unimplemented!(),
         }
     }
 }

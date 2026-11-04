@@ -754,6 +754,14 @@ impl Player {
         desc: wgc::device::trace::TraceRayTracingPipelineDescriptor<'a>,
     ) -> wgc::ray_tracing_pipeline::RayTracingPipelineDescriptor<'a> {
         let layout = desc.layout.map(|id| self.resolve_pipeline_layout_id(id));
+        let stage = |stage: wgc::pipeline::ProgrammableStageDescriptor<'a, _>| {
+            wgc::pipeline::ProgrammableStageDescriptor {
+                module: self.resolve_shader_module_id(stage.module),
+                entry_point: stage.entry_point,
+                constants: stage.constants,
+                zero_initialize_workgroup_memory: stage.zero_initialize_workgroup_memory,
+            }
+        };
 
         wgc::ray_tracing_pipeline::RayTracingPipelineDescriptor {
             label: desc.label,
@@ -802,8 +810,19 @@ impl Player {
                             }
                         }),
                     },
+                    wgc::ray_tracing_pipeline::RayTracingIntersectionDescriptor::Procedural {
+                        intersection,
+                        closest_hit,
+                        any_hit,
+                    } => wgc::ray_tracing_pipeline::RayTracingIntersectionDescriptor::Procedural {
+                        intersection: stage(intersection),
+                        closest_hit: closest_hit.map(stage),
+                        any_hit: any_hit.map(stage),
+                    },
                 })
                 .collect(),
+            callables: desc.callables.into_iter().map(stage).collect(),
+            max_geometry_stride: desc.max_geometry_stride,
             max_recursion_depth: desc.max_recursion_depth,
         }
     }
@@ -1457,6 +1476,12 @@ impl Player {
             vertex_stride: geometry.vertex_stride,
             first_index: geometry.first_index,
             transform_buffer_offset: geometry.transform_buffer_offset,
+            end_vertex_buffer: geometry
+                .end_vertex_buffer
+                .map(|buf| self.resolve_buffer_id(buf)),
+            opacity_micromap: geometry
+                .opacity_micromap
+                .map(|micromap| micromap.map(|buf| self.resolve_buffer_id(buf))),
         }
     }
 
@@ -1482,6 +1507,8 @@ impl Player {
             custom_data: instance.custom_data,
             mask: instance.mask,
             intersection_index: instance.intersection_index,
+            flags: instance.flags,
+            end_transform: instance.end_transform,
         }
     }
 

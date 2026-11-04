@@ -2241,7 +2241,9 @@ impl crate::Device for super::Device {
                     },
                 ],
             },
-            options: MTLAccelerationStructureInstanceOptions::None,
+            options: MTLAccelerationStructureInstanceOptions::from_bits_retain(u32::from(
+                instance.flags.bits(),
+            )),
             mask: instance.mask as u32,
             intersectionFunctionTableOffset: instance.pipeline_intersection_data_offset,
             userID: instance.custom_data,

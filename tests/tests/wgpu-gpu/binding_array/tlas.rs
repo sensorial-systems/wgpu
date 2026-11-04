@@ -96,6 +96,7 @@ async fn binding_array_tlas(ctx: TestingContext) {
         index_format: Some(wgpu::IndexFormat::Uint16),
         index_count: Some(index_data.len() as u32),
         flags: wgpu::AccelerationStructureGeometryFlags::OPAQUE,
+        opacity_micromap: Vec::new(),
     };
 
     let blas = ctx.device.create_blas(
@@ -160,6 +161,8 @@ async fn binding_array_tlas(ctx: TestingContext) {
                 first_index: Some(0),
                 transform_buffer: None,
                 transform_buffer_offset: None,
+                end_vertex_buffer: None,
+                opacity_micromap: None,
             }]),
         }),
         [&tlas_a, &tlas_b],

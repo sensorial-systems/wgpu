@@ -69,6 +69,22 @@ pub enum RayTracingIntersectionDescriptor<'a> {
         /// intersection process.
         any_hit: Option<RayTracingStage<'a>>,
     },
+    /// This group of shaders may only be used when a BLAS with
+    /// axis-aligned bounding box geometry is intersected: its intersection
+    /// stage tests the ray against each box's procedural primitive and
+    /// reports the hits, with attributes of its own
+    /// (`var<ray_hit_attribute>`), which the other two stages read.
+    Procedural {
+        /// Stage to call when a ray enters the box of a primitive within an
+        /// instance bound to this descriptor.
+        intersection: RayTracingStage<'a>,
+        /// Optional stage to call if, after the entire intersection process
+        /// is complete, a primitive's reported hit is the closest.
+        closest_hit: Option<RayTracingStage<'a>>,
+        /// Optional stage to call on each hit the intersection stage
+        /// reports, which may ignore it or end the search on it.
+        any_hit: Option<RayTracingStage<'a>>,
+    },
 }
 
 /// Describes a ray tracing pipeline.
@@ -108,6 +124,15 @@ pub struct RayTracingPipelineDescriptor<'a> {
     pub misses: &'a [RayTracingStage<'a>],
     /// The list of intersection descriptors
     pub intersections: &'a [RayTracingIntersectionDescriptor<'a>],
+    /// The callable stages, which a stage's `executeCallable` runs by index:
+    /// clamped to the last, and doing nothing without any.
+    pub callables: &'a [RayTracingStage<'a>],
+    /// The greatest geometry stride a trace may give (`traceRay`'s argument
+    /// after the hit group offset): how many hit groups apart one geometry
+    /// of a bottom level structure is from the next. A trace's stride is
+    /// clamped to it, and every hit group an instance's geometries can reach
+    /// with any stride up to it must be in the pipeline, of their type.
+    pub max_geometry_stride: u32,
     /// The maximum depth of entry points able to be recursed into, discounting the ray generation stage.
     pub max_recursion_depth: u32,
     /// The pipeline cache to use when creating this pipeline.
