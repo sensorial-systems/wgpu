@@ -3599,12 +3599,15 @@ impl Writer {
 
             pointer_type_id
         } else {
-            // This is a global variable in the Storage address space. The only
-            // way it could have `global_needs_wrapper() == false` is if it has
-            // a runtime-sized or binding array.
+            // This is a global variable in the Storage or Uniform address
+            // space. The only way it could have `global_needs_wrapper() ==
+            // false` is if it has a runtime-sized or binding array.
             // Runtime-sized arrays were decorated when iterating through struct content.
-            // Now binding arrays require Block decorating.
-            if let crate::AddressSpace::Storage { .. } = global_variable.space {
+            // Now binding arrays require Block decorating, of storage buffers
+            // and of uniform buffers alike.
+            if let crate::AddressSpace::Storage { .. } | crate::AddressSpace::Uniform =
+                global_variable.space
+            {
                 match ir_module.types[global_variable.ty].inner {
                     crate::TypeInner::BindingArray { base, .. } => {
                         let ty = &ir_module.types[base];

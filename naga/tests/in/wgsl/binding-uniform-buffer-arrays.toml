@@ -1,0 +1,5 @@
+targets = "WGSL | SPIRV"
+capabilities = "BUFFER_BINDING_ARRAY"
+
+[spv]
+version = [1, 1]
