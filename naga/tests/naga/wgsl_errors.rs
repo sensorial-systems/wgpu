@@ -3930,9 +3930,7 @@ fn compaction_keeps_incoming_ray_payloads() {
         .iter()
         .find(|entry| entry.name == "miss")
         .expect("the miss stage");
-    let payload = miss
-        .incoming_ray_payload
-        .expect("the miss stage's payload");
+    let payload = miss.incoming_ray_payload.expect("the miss stage's payload");
     assert_eq!(
         module.global_variables[payload].name.as_deref(),
         Some("incoming")
@@ -6150,6 +6148,27 @@ fn check_ray_tracing_pipeline_verdicts_stage() {
             );
         }
     }
+}
+
+/// Checks a generated intersection's distance may be computed, not only a
+/// constant: it is emitted before the statement that uses it.
+#[test]
+fn check_ray_query_generate_intersection_of_a_computed_distance() {
+    check_one_validation!(
+        "enable wgpu_ray_query;
+        @group(0) @binding(0) var acc_struct: acceleration_structure;
+        var<private> distance: f32;
+
+        @compute @workgroup_size(1) fn main() {
+            var query: ray_query;
+            rayQueryInitialize(&query, acc_struct, RayDesc());
+            while (rayQueryProceed(&query)) {
+                rayQueryGenerateIntersection(&query, distance * 2.0);
+            }
+        }",
+        Ok(_),
+        Capabilities::RAY_QUERY
+    );
 }
 
 /// Checks a `traceRay`'s hit group offset and miss index must be `u32`s.

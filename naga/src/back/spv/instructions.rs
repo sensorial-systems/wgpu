@@ -344,6 +344,26 @@ impl super::Instruction {
         instruction
     }
 
+    pub(super) fn type_hit_object(id: Word) -> Self {
+        let mut instruction = Self::new(Op::TypeHitObjectNV);
+        instruction.set_result(id);
+        instruction
+    }
+
+    /// A hit object instruction: `op`, with a result where it has one, of
+    /// `operands`.
+    pub(super) fn hit_object(op: Op, result: Option<(Word, Word)>, operands: &[Word]) -> Self {
+        let mut instruction = Self::new(op);
+        if let Some((result_type_id, id)) = result {
+            instruction.set_type(result_type_id);
+            instruction.set_result(id);
+        }
+        for &operand in operands {
+            instruction.add_operand(operand);
+        }
+        instruction
+    }
+
     pub(super) fn type_ray_query(id: Word) -> Self {
         let mut instruction = Self::new(Op::TypeRayQueryKHR);
         instruction.set_result(id);
@@ -851,6 +871,18 @@ impl super::Instruction {
         instruction
     }
 
+    pub(super) fn ray_query_get_candidate_aabb_opaque(
+        result_type_id: Word,
+        id: Word,
+        query: Word,
+    ) -> Self {
+        let mut instruction = Self::new(Op::RayQueryGetIntersectionCandidateAABBOpaqueKHR);
+        instruction.set_type(result_type_id);
+        instruction.set_result(id);
+        instruction.add_operand(query);
+        instruction
+    }
+
     pub(super) fn ray_query_get_t_min(result_type_id: Word, id: Word, query: Word) -> Self {
         let mut instruction = Self::new(Op::RayQueryGetRayTMinKHR);
         instruction.set_type(result_type_id);
@@ -895,6 +927,58 @@ impl super::Instruction {
         instruction.add_operand(ray_dir);
         instruction.add_operand(ray_tmax);
         instruction.add_operand(payload);
+        instruction
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn trace_ray_motion(
+        acceleration_structure: Word,
+        ray_flags: Word,
+        cull_mask: Word,
+        sbt_offset: Word,
+        sbt_stride: Word,
+        miss_idx: Word,
+        ray_origin: Word,
+        ray_tmin: Word,
+        ray_dir: Word,
+        ray_tmax: Word,
+        time: Word,
+        payload: Word,
+    ) -> Self {
+        let mut instruction = Self::new(Op::TraceRayMotionNV);
+        instruction.add_operand(acceleration_structure);
+        instruction.add_operand(ray_flags);
+        instruction.add_operand(cull_mask);
+        instruction.add_operand(sbt_offset);
+        instruction.add_operand(sbt_stride);
+        instruction.add_operand(miss_idx);
+        instruction.add_operand(ray_origin);
+        instruction.add_operand(ray_tmin);
+        instruction.add_operand(ray_dir);
+        instruction.add_operand(ray_tmax);
+        instruction.add_operand(time);
+        instruction.add_operand(payload);
+        instruction
+    }
+
+    pub(super) fn report_intersection(
+        result_type_id: Word,
+        id: Word,
+        hit_t: Word,
+        hit_kind: Word,
+    ) -> Self {
+        let mut instruction = Self::new(Op::ReportIntersectionKHR);
+        instruction.set_type(result_type_id);
+        instruction.set_result(id);
+        instruction.add_operand(hit_t);
+        instruction.add_operand(hit_kind);
+        instruction
+    }
+
+    pub(super) fn execute_callable(sbt_index: Word, callable_data: Word) -> Self {
+        let mut instruction = Self::new(Op::ExecuteCallableKHR);
+        instruction.add_operand(sbt_index);
+        instruction.add_operand(callable_data);
         instruction
     }
 

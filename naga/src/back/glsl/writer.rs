@@ -534,6 +534,7 @@ impl<'a, W: Write> Writer<'a, W> {
             | TypeInner::Sampler { .. }
             | TypeInner::AccelerationStructure { .. }
             | TypeInner::RayQuery { .. }
+            | TypeInner::HitObject
             | TypeInner::BindingArray { .. }
             | TypeInner::CooperativeMatrix { .. } => {
                 return Err(Error::Custom(format!("Unable to write type {inner:?}")))
@@ -743,7 +744,11 @@ impl<'a, W: Write> Writer<'a, W> {
             // Textures and samplers are handled directly in `Writer::write`.
             crate::AddressSpace::Handle => unreachable!(),
             // ray tracing pipelines unsupported
-            crate::AddressSpace::RayPayload | crate::AddressSpace::IncomingRayPayload => {
+            crate::AddressSpace::RayPayload
+            | crate::AddressSpace::IncomingRayPayload
+            | crate::AddressSpace::RayHitAttribute
+            | crate::AddressSpace::CallableData
+            | crate::AddressSpace::IncomingCallableData => {
                 unreachable!()
             }
         }
@@ -1132,7 +1137,9 @@ impl<'a, W: Write> Writer<'a, W> {
             | ShaderStage::RayGeneration
             | ShaderStage::AnyHit
             | ShaderStage::ClosestHit
-            | ShaderStage::Miss => unreachable!(),
+            | ShaderStage::Miss
+            | ShaderStage::Intersection
+            | ShaderStage::Callable => unreachable!(),
         };
 
         // Write the I/O locations, if allowed
@@ -3806,6 +3813,7 @@ impl<'a, W: Write> Writer<'a, W> {
             Expression::CallResult(_)
             | Expression::AtomicResult { .. }
             | Expression::RayQueryProceedResult
+            | Expression::ReportIntersectionResult
             | Expression::WorkGroupUniformLoadResult { .. }
             | Expression::SubgroupOperationResult { .. }
             | Expression::SubgroupBallotResult => unreachable!(),
@@ -3818,6 +3826,8 @@ impl<'a, W: Write> Writer<'a, W> {
             // not supported yet
             Expression::RayQueryGetIntersection { .. }
             | Expression::RayQueryVertexPositions { .. }
+            | Expression::RayQueryCandidateAabbOpaque { .. }
+            | Expression::HitObjectQuery { .. }
             | Expression::CooperativeLoad { .. }
             | Expression::CooperativeMultiplyAdd { .. } => unreachable!(),
         }

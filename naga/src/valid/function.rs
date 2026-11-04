@@ -87,6 +87,8 @@ pub enum LocalVariableError {
     NonConstOrOverrideInitializer,
     #[error("Local variable has a type `ray_query` and so cannot be initialized.")]
     RayQueryWithInitializeExpression,
+    #[error("Local variable has a type `hit_object` and so cannot be initialized.")]
+    HitObjectWithInitializeExpression,
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
@@ -188,6 +190,14 @@ pub enum FunctionError {
     InvalidRayDescriptor(Handle<crate::Expression>),
     #[error("Ray group index {0:?} is not a `u32`")]
     InvalidRayGroupIndex(Handle<crate::Expression>),
+    #[error("The ray's time {0:?} is not a `f32`")]
+    InvalidRayTime(Handle<crate::Expression>),
+    #[error("Hit kind {0:?} is not a `u32`")]
+    InvalidHitKind(Handle<crate::Expression>),
+    #[error("Callable index {0:?} is not a `u32`")]
+    InvalidCallableIndex(Handle<crate::Expression>),
+    #[error("The data passed to `executeCallable` must be a pointer directly to a global variable in the `callable_data` or `incoming_callable_data` address space")]
+    InvalidCallableData(Handle<crate::Expression>),
     #[error("Ray Query {0:?} does not have a matching type")]
     InvalidRayQueryType(Handle<crate::Type>),
     #[error("Hit distance {0:?} must be an f32")]
@@ -244,6 +254,12 @@ pub enum FunctionError {
     InvalidDebugPrintfArgument(Handle<crate::Expression>),
     #[error("Tried to store to pointer {0:?} which is a ray query and so cannot be assigned to")]
     RayQueryStore(Handle<crate::Expression>),
+    #[error("Tried to store to pointer {0:?} which is a hit object and so cannot be assigned to")]
+    HitObjectStore(Handle<crate::Expression>),
+    #[error("{0:?} is not a pointer to a local hit object")]
+    InvalidHitObject(Handle<crate::Expression>),
+    #[error("The reordering hint {0:?} is not a `u32`")]
+    InvalidReorderHint(Handle<crate::Expression>),
 }
 
 bitflags::bitflags! {
@@ -787,6 +803,22 @@ impl super::Validator {
         Ok(())
     }
 
+    /// That `hit_object` points to a local hit object.
+    fn validate_hit_object(
+        &self,
+        hit_object: Handle<crate::Expression>,
+        context: &BlockContext,
+    ) -> Result<(), WithSpan<FunctionError>> {
+        match *context.resolve_type_inner(hit_object, &self.valid_expression_set)? {
+            crate::TypeInner::Pointer {
+                base,
+                space: crate::AddressSpace::Function,
+            } if context.types[base].inner == crate::TypeInner::HitObject => Ok(()),
+            _ => Err(FunctionError::InvalidHitObject(hit_object)
+                .with_span_handle(hit_object, context.expressions)),
+        }
+    }
+
     #[allow(clippy::large_stack_frames)] // TODO(https://github.com/gfx-rs/wgpu/issues/9456)
     fn validate_block_impl(
         &mut self,
@@ -828,6 +860,8 @@ impl super::Validator {
                             | Ex::ArrayLength(_)
                             | Ex::RayQueryGetIntersection { .. }
                             | Ex::RayQueryVertexPositions { .. }
+                            | Ex::RayQueryCandidateAabbOpaque { .. }
+                            | Ex::HitObjectQuery { .. }
                             | Ex::CooperativeLoad { .. }
                             | Ex::CooperativeMultiplyAdd { .. } => {
                                 self.emit_expression(handle, context)?
@@ -836,6 +870,7 @@ impl super::Validator {
                             | Ex::AtomicResult { .. }
                             | Ex::WorkGroupUniformLoadResult { .. }
                             | Ex::RayQueryProceedResult
+                            | Ex::ReportIntersectionResult
                             | Ex::SubgroupBallotResult
                             | Ex::SubgroupOperationResult { .. } => {
                                 return Err(FunctionError::EmitResult(handle)
@@ -1104,6 +1139,9 @@ impl super::Validator {
                     let good = if let Some(&Ti::Atomic(ref scalar)) = pointer_base_ty {
                         // The Naga IR allows storing a scalar to an atomic.
                         *value_ty == Ti::Scalar(*scalar)
+                    } else if let Some(&Ti::HitObject) = pointer_base_ty {
+                        return Err(FunctionError::HitObjectStore(pointer)
+                            .with_span_handle(pointer, context.expressions));
                     } else if let Some(&Ti::RayQuery { .. }) = pointer_base_ty {
                         return Err(FunctionError::RayQueryStore(pointer)
                             .with_span_context((
@@ -1712,7 +1750,33 @@ impl super::Validator {
                         descriptor,
                         payload,
                         groups,
+                        time,
+                        hit_object,
                     } => {
+                        if let Some(hit_object) = hit_object {
+                            self.validate_hit_object(hit_object, context)?;
+                        }
+                        stages &= super::ShaderStages::RAY_GENERATION
+                            | super::ShaderStages::CLOSEST_HIT
+                            | super::ShaderStages::MISS;
+                        if let Some(time) = time {
+                            if !self
+                                .capabilities
+                                .contains(super::Capabilities::RAY_TRACING_MOTION_BLUR)
+                            {
+                                return Err(FunctionError::MissingCapability(
+                                    super::Capabilities::RAY_TRACING_MOTION_BLUR,
+                                )
+                                .with_span_static(span, "a trace at a time"));
+                            }
+                            match *context.resolve_type_inner(time, &self.valid_expression_set)? {
+                                Ti::Scalar(crate::Scalar::F32) => {}
+                                _ => {
+                                    return Err(FunctionError::InvalidRayTime(time)
+                                        .with_span_handle(time, context.expressions))
+                                }
+                            }
+                        }
                         match *context.resolve_type_inner(
                             acceleration_structure,
                             &self.valid_expression_set,
@@ -1789,7 +1853,10 @@ impl super::Validator {
                         }
 
                         if let Some(groups) = groups {
-                            for index in [groups.hit_group_offset, groups.miss_index] {
+                            let indices = [groups.hit_group_offset, groups.miss_index]
+                                .into_iter()
+                                .chain(groups.geometry_stride);
+                            for index in indices {
                                 match *context
                                     .resolve_type_inner(index, &self.valid_expression_set)?
                                 {
@@ -1805,6 +1872,147 @@ impl super::Validator {
                     crate::RayPipelineFunction::IgnoreIntersection
                     | crate::RayPipelineFunction::TerminateRay => {
                         stages &= super::ShaderStages::ANY_HIT;
+                    }
+                    crate::RayPipelineFunction::ReportIntersection {
+                        hit_t,
+                        hit_kind,
+                        result,
+                    } => {
+                        stages &= super::ShaderStages::INTERSECTION;
+                        match *context.resolve_type_inner(hit_t, &self.valid_expression_set)? {
+                            Ti::Scalar(crate::Scalar::F32) => {}
+                            _ => {
+                                return Err(FunctionError::InvalidHitDistanceType(hit_t)
+                                    .with_span_handle(hit_t, context.expressions))
+                            }
+                        }
+                        match *context.resolve_type_inner(hit_kind, &self.valid_expression_set)? {
+                            Ti::Scalar(crate::Scalar::U32) => {}
+                            _ => {
+                                return Err(FunctionError::InvalidHitKind(hit_kind)
+                                    .with_span_handle(hit_kind, context.expressions))
+                            }
+                        }
+                        self.emit_expression(result, context)?;
+                    }
+                    crate::RayPipelineFunction::ExecuteCallable { index, data } => {
+                        stages &= super::ShaderStages::RAY_GENERATION
+                            | super::ShaderStages::CLOSEST_HIT
+                            | super::ShaderStages::MISS
+                            | super::ShaderStages::CALLABLE;
+                        match *context.resolve_type_inner(index, &self.valid_expression_set)? {
+                            Ti::Scalar(crate::Scalar::U32) => {}
+                            _ => {
+                                return Err(FunctionError::InvalidCallableIndex(index)
+                                    .with_span_handle(index, context.expressions))
+                            }
+                        }
+                        let callable_space = matches!(
+                            *context.resolve_type_inner(data, &self.valid_expression_set)?,
+                            Ti::Pointer {
+                                space: AddressSpace::CallableData
+                                    | AddressSpace::IncomingCallableData,
+                                ..
+                            }
+                        );
+                        // spir-v requires a direct reference to a global variable.
+                        if !callable_space
+                            || !matches!(
+                                context.expressions[data],
+                                crate::Expression::GlobalVariable(_)
+                            )
+                        {
+                            return Err(FunctionError::InvalidCallableData(data)
+                                .with_span_handle(data, context.expressions));
+                        }
+                    }
+                    crate::RayPipelineFunction::HitObjectRecordMiss {
+                        hit_object,
+                        miss_index,
+                        descriptor,
+                    } => {
+                        stages &= super::ShaderStages::RAY_GENERATION
+                            | super::ShaderStages::CLOSEST_HIT
+                            | super::ShaderStages::MISS;
+                        self.validate_hit_object(hit_object, context)?;
+                        match *context.resolve_type_inner(miss_index, &self.valid_expression_set)? {
+                            Ti::Scalar(crate::Scalar::U32) => {}
+                            _ => {
+                                return Err(FunctionError::InvalidRayGroupIndex(miss_index)
+                                    .with_span_handle(miss_index, context.expressions))
+                            }
+                        }
+                        let desc_ty_given =
+                            context.resolve_type_inner(descriptor, &self.valid_expression_set)?;
+                        let desc_ty_expected = context
+                            .special_types
+                            .ray_desc
+                            .map(|handle| &context.types[handle].inner);
+                        if Some(desc_ty_given) != desc_ty_expected {
+                            return Err(FunctionError::InvalidRayDescriptor(descriptor)
+                                .with_span_static(span, "invalid ray descriptor"));
+                        }
+                    }
+                    crate::RayPipelineFunction::HitObjectRecordEmpty { hit_object } => {
+                        stages &= super::ShaderStages::RAY_GENERATION
+                            | super::ShaderStages::CLOSEST_HIT
+                            | super::ShaderStages::MISS;
+                        self.validate_hit_object(hit_object, context)?;
+                    }
+                    crate::RayPipelineFunction::HitObjectExecute {
+                        hit_object,
+                        payload,
+                    } => {
+                        stages &= super::ShaderStages::RAY_GENERATION
+                            | super::ShaderStages::CLOSEST_HIT
+                            | super::ShaderStages::MISS;
+                        self.validate_hit_object(hit_object, context)?;
+                        // Executed with a payload of the invocation's own,
+                        // not the one it was called with.
+                        match *context.resolve_type_inner(payload, &self.valid_expression_set)? {
+                            Ti::Pointer {
+                                space: AddressSpace::RayPayload,
+                                ..
+                            } => {}
+                            Ti::Pointer { space, .. } => {
+                                return Err(FunctionError::InvalidPayloadAddressSpace(space)
+                                    .with_span_handle(payload, context.expressions))
+                            }
+                            _ => {
+                                return Err(FunctionError::InvalidPayloadType
+                                    .with_span_handle(payload, context.expressions))
+                            }
+                        }
+                        // spir-v requires a direct reference to a global variable.
+                        let crate::Expression::GlobalVariable(_) = context.expressions[payload]
+                        else {
+                            return Err(FunctionError::PayloadPointerNotGlobal
+                                .with_span_handle(payload, context.expressions));
+                        };
+                    }
+                    crate::RayPipelineFunction::ReorderThread { hit_object, hint } => {
+                        stages &= super::ShaderStages::RAY_GENERATION;
+                        if let Some(hit_object) = hit_object {
+                            self.validate_hit_object(hit_object, context)?;
+                        }
+                        if !self
+                            .capabilities
+                            .contains(super::Capabilities::RAY_TRACING_INVOCATION_REORDER)
+                        {
+                            return Err(FunctionError::MissingCapability(
+                                super::Capabilities::RAY_TRACING_INVOCATION_REORDER,
+                            )
+                            .with_span_static(span, "a reordering"));
+                        }
+                        for value in hint.iter().flat_map(|hint| [hint.hint, hint.bits]) {
+                            match *context.resolve_type_inner(value, &self.valid_expression_set)? {
+                                Ti::Scalar(crate::Scalar::U32) => {}
+                                _ => {
+                                    return Err(FunctionError::InvalidReorderHint(value)
+                                        .with_span_handle(value, context.expressions))
+                                }
+                            }
+                        }
                     }
                 },
 
@@ -1888,6 +2096,9 @@ impl super::Validator {
 
             if matches!(gctx.types[var.ty].inner, crate::TypeInner::RayQuery { .. }) {
                 return Err(LocalVariableError::RayQueryWithInitializeExpression);
+            }
+            if gctx.types[var.ty].inner == crate::TypeInner::HitObject {
+                return Err(LocalVariableError::HitObjectWithInitializeExpression);
             }
         }
 

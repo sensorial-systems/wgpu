@@ -161,6 +161,7 @@ mod immediates;
 mod keywords;
 mod mesh_shader;
 mod ray;
+mod ray_pipeline;
 mod storage;
 mod writer;
 
@@ -306,7 +307,9 @@ pub const fn shader_stage_to_hlsl_str(st: nt::ShaderStage) -> &'static str {
         nt::ShaderStage::RayGeneration
         | nt::ShaderStage::AnyHit
         | nt::ShaderStage::ClosestHit
-        | nt::ShaderStage::Miss => "lib",
+        | nt::ShaderStage::Miss
+        | nt::ShaderStage::Intersection
+        | nt::ShaderStage::Callable => "lib",
     }
 }
 
@@ -575,6 +578,13 @@ pub struct Options {
     /// if set, ray queries will get a variable to track their state to prevent
     /// misuse.
     pub ray_query_initialization_tracking: bool,
+
+    /// The hit groups, miss and callable stages of the ray tracing pipeline
+    /// the module is written for, if it is, which traces and callables are
+    /// kept within: see [`RayTracingPipelineGroups`].
+    ///
+    /// [`RayTracingPipelineGroups`]: crate::back::RayTracingPipelineGroups
+    pub ray_tracing_pipeline_groups: Option<back::RayTracingPipelineGroups>,
 }
 
 impl Default for Options {
@@ -595,6 +605,7 @@ impl Default for Options {
             task_dispatch_limits: None,
             mesh_shader_primitive_indices_clamp: true,
             ray_query_initialization_tracking: true,
+            ray_tracing_pipeline_groups: None,
         }
     }
 }
@@ -808,6 +819,12 @@ pub struct Writer<'a, W> {
     ///
     /// [`Immediate`]: crate::AddressSpace::Immediate
     immediate_raw_names: crate::FastHashMap<Handle<crate::GlobalVariable>, String>,
+
+    /// The structs DXR takes payloads, callable data and hit attributes of
+    /// these types as; see the [`ray_pipeline`] module.
+    ray_structs: crate::FastHashMap<Handle<crate::Type>, ray_pipeline::RayStruct>,
+    /// The struct an intersection stage reports hits without attributes by.
+    no_attributes: Option<String>,
 }
 
 pub fn supported_capabilities() -> crate::valid::Capabilities {
@@ -852,7 +869,7 @@ pub fn supported_capabilities() -> crate::valid::Capabilities {
         | Caps::STORAGE_BUFFER_BINDING_ARRAY_NON_UNIFORM_INDEXING
         // No COOPERATIVE_MATRIX
         | Caps::PER_VERTEX
-        // No RAY_TRACING_PIPELINE
+        | Caps::RAY_TRACING_PIPELINE
         // No DRAW_INDEX
         // No MEMORY_DECORATION_VOLATILE
         | Caps::MEMORY_DECORATION_COHERENT

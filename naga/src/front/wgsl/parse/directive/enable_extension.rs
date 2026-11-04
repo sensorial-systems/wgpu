@@ -14,6 +14,9 @@ pub(crate) struct EnableExtensions {
     wgpu_ray_query: bool,
     wgpu_ray_query_vertex_return: bool,
     wgpu_ray_tracing_pipeline: bool,
+    wgpu_ray_tracing_motion_blur: bool,
+    wgpu_ray_tracing_invocation_reorder: bool,
+    wgpu_ray_tracing_opacity_micromap: bool,
     dual_source_blending: bool,
     /// Whether `enable f16;` was written earlier in the shader module.
     f16: bool,
@@ -35,6 +38,9 @@ impl EnableExtensions {
             wgpu_ray_query: false,
             wgpu_ray_query_vertex_return: false,
             wgpu_ray_tracing_pipeline: false,
+            wgpu_ray_tracing_motion_blur: false,
+            wgpu_ray_tracing_invocation_reorder: false,
+            wgpu_ray_tracing_opacity_micromap: false,
             f16: false,
             wgpu_int16: false,
             dual_source_blending: false,
@@ -59,6 +65,15 @@ impl EnableExtensions {
             ImplementedEnableExtension::WgpuRayTracingPipeline => {
                 &mut self.wgpu_ray_tracing_pipeline
             }
+            ImplementedEnableExtension::WgpuRayTracingMotionBlur => {
+                &mut self.wgpu_ray_tracing_motion_blur
+            }
+            ImplementedEnableExtension::WgpuRayTracingInvocationReorder => {
+                &mut self.wgpu_ray_tracing_invocation_reorder
+            }
+            ImplementedEnableExtension::WgpuRayTracingOpacityMicromap => {
+                &mut self.wgpu_ray_tracing_opacity_micromap
+            }
             ImplementedEnableExtension::DualSourceBlending => &mut self.dual_source_blending,
             ImplementedEnableExtension::F16 => &mut self.f16,
             ImplementedEnableExtension::WgpuInt16 => &mut self.wgpu_int16,
@@ -82,6 +97,15 @@ impl EnableExtensions {
                 self.wgpu_ray_query_vertex_return
             }
             ImplementedEnableExtension::WgpuRayTracingPipeline => self.wgpu_ray_tracing_pipeline,
+            ImplementedEnableExtension::WgpuRayTracingMotionBlur => {
+                self.wgpu_ray_tracing_motion_blur
+            }
+            ImplementedEnableExtension::WgpuRayTracingInvocationReorder => {
+                self.wgpu_ray_tracing_invocation_reorder
+            }
+            ImplementedEnableExtension::WgpuRayTracingOpacityMicromap => {
+                self.wgpu_ray_tracing_opacity_micromap
+            }
             ImplementedEnableExtension::DualSourceBlending => self.dual_source_blending,
             ImplementedEnableExtension::F16 => self.f16,
             ImplementedEnableExtension::WgpuInt16 => self.wgpu_int16,
@@ -140,6 +164,9 @@ impl EnableExtension {
     const RAY_QUERY: &'static str = "wgpu_ray_query";
     const RAY_QUERY_VERTEX_RETURN: &'static str = "wgpu_ray_query_vertex_return";
     const RAY_TRACING_PIPELINE: &'static str = "wgpu_ray_tracing_pipeline";
+    const RAY_TRACING_MOTION_BLUR: &'static str = "wgpu_ray_tracing_motion_blur";
+    const RAY_TRACING_INVOCATION_REORDER: &'static str = "wgpu_ray_tracing_invocation_reorder";
+    const RAY_TRACING_OPACITY_MICROMAP: &'static str = "wgpu_ray_tracing_opacity_micromap";
     const COOPERATIVE_MATRIX: &'static str = "wgpu_cooperative_matrix";
     const SUBGROUPS: &'static str = "subgroups";
     const PRIMITIVE_INDEX: &'static str = "primitive_index";
@@ -164,6 +191,15 @@ impl EnableExtension {
             }
             Self::RAY_TRACING_PIPELINE => {
                 Self::Implemented(ImplementedEnableExtension::WgpuRayTracingPipeline)
+            }
+            Self::RAY_TRACING_MOTION_BLUR => {
+                Self::Implemented(ImplementedEnableExtension::WgpuRayTracingMotionBlur)
+            }
+            Self::RAY_TRACING_INVOCATION_REORDER => {
+                Self::Implemented(ImplementedEnableExtension::WgpuRayTracingInvocationReorder)
+            }
+            Self::RAY_TRACING_OPACITY_MICROMAP => {
+                Self::Implemented(ImplementedEnableExtension::WgpuRayTracingOpacityMicromap)
             }
             Self::COOPERATIVE_MATRIX => {
                 Self::Implemented(ImplementedEnableExtension::WgpuCooperativeMatrix)
@@ -195,6 +231,15 @@ impl EnableExtension {
                 ImplementedEnableExtension::DrawIndex => Self::DRAW_INDEX,
                 ImplementedEnableExtension::PrimitiveIndex => Self::PRIMITIVE_INDEX,
                 ImplementedEnableExtension::WgpuRayTracingPipeline => Self::RAY_TRACING_PIPELINE,
+                ImplementedEnableExtension::WgpuRayTracingMotionBlur => {
+                    Self::RAY_TRACING_MOTION_BLUR
+                }
+                ImplementedEnableExtension::WgpuRayTracingInvocationReorder => {
+                    Self::RAY_TRACING_INVOCATION_REORDER
+                }
+                ImplementedEnableExtension::WgpuRayTracingOpacityMicromap => {
+                    Self::RAY_TRACING_OPACITY_MICROMAP
+                }
                 ImplementedEnableExtension::WgpuPerVertex => Self::PER_VERTEX,
                 ImplementedEnableExtension::WgpuBindingArray => Self::BINDING_ARRAY,
                 ImplementedEnableExtension::WgpuInt16 => Self::INT16,
@@ -237,6 +282,15 @@ pub enum ImplementedEnableExtension {
     WgpuRayQueryVertexReturn,
     /// Enables the `wgpu_ray_tracing_pipeline` extension, native only.
     WgpuRayTracingPipeline,
+    /// Enables the `wgpu_ray_tracing_motion_blur` extension, native only:
+    /// `traceRayMotion` and `@builtin(current_ray_time)`.
+    WgpuRayTracingMotionBlur,
+    /// Enables the `wgpu_ray_tracing_invocation_reorder` extension, native
+    /// only: `hit_object`s, traced into, executed and reordered by.
+    WgpuRayTracingInvocationReorder,
+    /// Enables the `wgpu_ray_tracing_opacity_micromap` extension, native
+    /// only: `RAY_FLAG_FORCE_OPACITY_MICROMAP_2_STATE`.
+    WgpuRayTracingOpacityMicromap,
     /// Enables the `wgpu_cooperative_matrix` extension, native only.
     WgpuCooperativeMatrix,
     /// Enables the `draw_index` builtin. Not currently part of the WGSL spec but probably will be at some point.
@@ -267,6 +321,9 @@ impl ImplementedEnableExtension {
         Self::WgpuRayQuery,
         Self::WgpuRayQueryVertexReturn,
         Self::WgpuRayTracingPipeline,
+        Self::WgpuRayTracingMotionBlur,
+        Self::WgpuRayTracingInvocationReorder,
+        Self::WgpuRayTracingOpacityMicromap,
         Self::WgpuCooperativeMatrix,
         Self::DrawIndex,
         Self::PrimitiveIndex,
@@ -293,6 +350,9 @@ impl ImplementedEnableExtension {
             Self::WgpuRayQueryVertexReturn => C::RAY_HIT_VERTEX_POSITION,
             Self::WgpuCooperativeMatrix => C::COOPERATIVE_MATRIX,
             Self::WgpuRayTracingPipeline => C::RAY_TRACING_PIPELINE,
+            Self::WgpuRayTracingMotionBlur => C::RAY_TRACING_MOTION_BLUR,
+            Self::WgpuRayTracingInvocationReorder => C::RAY_TRACING_INVOCATION_REORDER,
+            Self::WgpuRayTracingOpacityMicromap => C::RAY_TRACING_OPACITY_MICROMAP,
             Self::DrawIndex => C::DRAW_INDEX,
             Self::PrimitiveIndex => C::PRIMITIVE_INDEX,
             Self::WgpuPerVertex => C::PER_VERTEX,

@@ -373,8 +373,9 @@ fn push_job_for_each_hlsl_config_item(
         compute,
         task,
         mesh,
+        library,
     } = hlsl_snapshots::Config::from_path(path.with_extension("ron"))?;
-    for shader in [vertex, fragment, compute, task, mesh]
+    for shader in [vertex, fragment, compute, task, mesh, library]
         .into_iter()
         .flatten()
     {
@@ -460,13 +461,12 @@ fn validate_hlsl(
         target_profile,
     } = config_item;
     EasyCommand::new(bin, |cmd| {
-        cmd.arg(file)
-            .arg("-T")
-            .arg(&target_profile)
-            .arg("-E")
-            .arg(&entry_point)
-            .args(params)
-            .stdout(Stdio::null())
+        cmd.arg(file).arg("-T").arg(&target_profile);
+        // A library exports its entry points by their attributes.
+        if !target_profile.starts_with("lib_") {
+            cmd.arg("-E").arg(&entry_point);
+        }
+        cmd.args(params).stdout(Stdio::null())
     })
     .success()
     .with_context(|| {

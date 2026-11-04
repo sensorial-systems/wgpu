@@ -2052,6 +2052,7 @@ impl BlockContext<'_> {
             | crate::Expression::AtomicResult { .. }
             | crate::Expression::WorkGroupUniformLoadResult { .. }
             | crate::Expression::RayQueryProceedResult
+            | crate::Expression::ReportIntersectionResult
             | crate::Expression::SubgroupBallotResult
             | crate::Expression::SubgroupOperationResult { .. } => self.cached[expr_handle],
             crate::Expression::As { expr, target } => {
@@ -2211,6 +2212,43 @@ impl BlockContext<'_> {
                     func_id,
                     &[query_id, init_tracker_id.initialized_tracker],
                 ));
+                id
+            }
+            crate::Expression::HitObjectQuery { hit_object, query } => {
+                use crate::HitObjectQuery as Q;
+                let op = match query {
+                    Q::IsHit => spirv::Op::HitObjectIsHitNV,
+                    Q::IsMiss => spirv::Op::HitObjectIsMissNV,
+                    Q::IsEmpty => spirv::Op::HitObjectIsEmptyNV,
+                    Q::RayTMin => spirv::Op::HitObjectGetRayTMinNV,
+                    Q::RayTMax => spirv::Op::HitObjectGetRayTMaxNV,
+                    Q::InstanceIndex => spirv::Op::HitObjectGetInstanceIdNV,
+                    Q::InstanceCustomData => spirv::Op::HitObjectGetInstanceCustomIndexNV,
+                    Q::GeometryIndex => spirv::Op::HitObjectGetGeometryIndexNV,
+                    Q::PrimitiveIndex => spirv::Op::HitObjectGetPrimitiveIndexNV,
+                    Q::HitKind => spirv::Op::HitObjectGetHitKindNV,
+                    Q::WorldRayOrigin => spirv::Op::HitObjectGetWorldRayOriginNV,
+                    Q::WorldRayDirection => spirv::Op::HitObjectGetWorldRayDirectionNV,
+                    Q::ObjectToWorld => spirv::Op::HitObjectGetObjectToWorldNV,
+                    Q::WorldToObject => spirv::Op::HitObjectGetWorldToObjectNV,
+                };
+                let id = self.gen_id();
+                block.body.push(Instruction::hit_object(
+                    op,
+                    Some((result_type_id, id)),
+                    &[self.cached[hit_object]],
+                ));
+                id
+            }
+            crate::Expression::RayQueryCandidateAabbOpaque { query } => {
+                let id = self.gen_id();
+                block
+                    .body
+                    .push(Instruction::ray_query_get_candidate_aabb_opaque(
+                        result_type_id,
+                        id,
+                        self.cached[query],
+                    ));
                 id
             }
             crate::Expression::RayQueryVertexPositions { query, committed } => {
@@ -4316,7 +4354,7 @@ impl BlockContext<'_> {
                     };
                 }
                 Statement::RayPipelineFunction(ref fun) => {
-                    self.write_ray_tracing_pipeline_function(fun, &mut block);
+                    self.write_ray_tracing_pipeline_function(fun, &mut block)?;
                 }
                 Statement::DebugPrintf {
                     ref format,

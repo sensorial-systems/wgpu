@@ -369,6 +369,7 @@ impl Display for TypeContext<'_> {
                 }
                 write!(out, "{}", super::ray::metal_intersector_ty())
             }
+            crate::TypeInner::HitObject => unimplemented!("metal has no hit objects"),
             crate::TypeInner::BindingArray { base, .. } => {
                 let base_inner = &self.gctx.types[base].inner;
                 let base_tyname = Self {
@@ -726,7 +727,11 @@ impl crate::AddressSpace {
             | Self::Handle
             | Self::TaskPayload => true,
             Self::Function => false,
-            Self::RayPayload | Self::IncomingRayPayload => unreachable!(),
+            Self::RayPayload
+            | Self::IncomingRayPayload
+            | Self::RayHitAttribute
+            | Self::CallableData
+            | Self::IncomingCallableData => unreachable!(),
         }
     }
 
@@ -739,7 +744,11 @@ impl crate::AddressSpace {
             // and that should be OK.
             Self::Storage { .. } => true,
             Self::TaskPayload => true,
-            Self::RayPayload | Self::IncomingRayPayload => unimplemented!(),
+            Self::RayPayload
+            | Self::IncomingRayPayload
+            | Self::RayHitAttribute
+            | Self::CallableData
+            | Self::IncomingCallableData => unimplemented!(),
             // These should always be read-write.
             Self::Private | Self::WorkGroup => false,
             // These translate to `constant` address space, no need for qualifiers.
@@ -761,6 +770,9 @@ impl crate::AddressSpace {
             Self::WorkGroup => Some("threadgroup"),
             Self::TaskPayload => Some("object_data"),
             Self::IncomingRayPayload => Some("ray_data"),
+            Self::RayHitAttribute | Self::CallableData | Self::IncomingCallableData => {
+                Some("thread")
+            }
         }
     }
 }
@@ -786,6 +798,7 @@ impl crate::Type {
             | Ti::Sampler { .. }
             | Ti::AccelerationStructure { .. }
             | Ti::RayQuery { .. }
+            | Ti::HitObject
             | Ti::BindingArray { .. } => false,
         }
     }
@@ -3118,7 +3131,8 @@ impl<W: Write> Writer<W> {
             | crate::Expression::WorkGroupUniformLoadResult { .. }
             | crate::Expression::SubgroupBallotResult
             | crate::Expression::SubgroupOperationResult { .. }
-            | crate::Expression::RayQueryProceedResult => {
+            | crate::Expression::RayQueryProceedResult
+            | crate::Expression::ReportIntersectionResult => {
                 unreachable!("statement result {expr_handle:?} has no temporary holding it")
             }
             crate::Expression::ArrayLength(expr) => {
@@ -3138,7 +3152,9 @@ impl<W: Write> Writer<W> {
                     write!(self.out, ")")?;
                 }
             }
-            crate::Expression::RayQueryVertexPositions { .. } => {
+            crate::Expression::RayQueryVertexPositions { .. }
+            | crate::Expression::RayQueryCandidateAabbOpaque { .. }
+            | crate::Expression::HitObjectQuery { .. } => {
                 unimplemented!()
             }
             crate::Expression::RayQueryGetIntersection { query, committed } => {
@@ -7345,7 +7361,9 @@ template <typename A>
                 crate::ShaderStage::RayGeneration
                 | crate::ShaderStage::AnyHit
                 | crate::ShaderStage::ClosestHit
-                | crate::ShaderStage::Miss => unimplemented!(),
+                | crate::ShaderStage::Miss
+                | crate::ShaderStage::Intersection
+                | crate::ShaderStage::Callable => unimplemented!(),
             };
 
             // Should this entry point be modified to do vertex pulling?
@@ -7421,7 +7439,10 @@ template <typename A>
                         | crate::AddressSpace::WorkGroup
                         | crate::AddressSpace::TaskPayload => {}
                         crate::AddressSpace::RayPayload
-                        | crate::AddressSpace::IncomingRayPayload => unimplemented!(),
+                        | crate::AddressSpace::IncomingRayPayload
+                        | crate::AddressSpace::RayHitAttribute
+                        | crate::AddressSpace::CallableData
+                        | crate::AddressSpace::IncomingCallableData => unimplemented!(),
                     }
                 }
                 if needs_buffer_sizes {

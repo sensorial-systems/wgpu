@@ -59,6 +59,9 @@ pub struct Config {
     pub compute: Vec<ConfigItem>,
     pub task: Vec<ConfigItem>,
     pub mesh: Vec<ConfigItem>,
+    /// Ray tracing pipeline stages, each a DXIL library's export.
+    #[nserde(default)]
+    pub library: Vec<ConfigItem>,
 }
 
 impl Config {
@@ -70,6 +73,7 @@ impl Config {
             compute: Default::default(),
             task: Default::default(),
             mesh: Default::default(),
+            library: Default::default(),
         }
     }
 
@@ -97,6 +101,11 @@ impl Config {
     pub fn to_file(&self, path: impl AsRef<Path>) -> anyhow::Result<()> {
         let path = path.as_ref();
         let mut s = self.serialize_ron();
+        // Only ray tracing pipelines' have libraries: others are written as
+        // they were before there were.
+        if self.library.is_empty() {
+            s = s.replace("    library:[\n    ],\n", "");
+        }
         s.push('\n');
         fs::write(path, &s).map_err(|e| anyhow!("failed to write to {}: {e}", path.display()))
     }
@@ -109,12 +118,14 @@ impl Config {
             compute,
             task,
             mesh,
+            library,
         } = self;
         vertex.is_empty()
             && fragment.is_empty()
             && compute.is_empty()
             && task.is_empty()
             && mesh.is_empty()
+            && library.is_empty()
     }
 }
 

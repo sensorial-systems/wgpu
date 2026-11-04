@@ -681,6 +681,7 @@ fn adjust_expr(new_pos: &HandleVec<Expression, Handle<Expression>>, expr: &mut E
         | Expression::LocalVariable(_)
         | Expression::CallResult(_)
         | Expression::RayQueryProceedResult
+        | Expression::ReportIntersectionResult
         | Expression::Constant(_)
         | Expression::Override(_)
         | Expression::ZeroValue(_)
@@ -694,8 +695,14 @@ fn adjust_expr(new_pos: &HandleVec<Expression, Handle<Expression>>, expr: &mut E
         Expression::RayQueryVertexPositions {
             ref mut query,
             committed: _,
-        } => {
+        }
+        | Expression::RayQueryCandidateAabbOpaque { ref mut query } => {
             adjust(query);
+        }
+        Expression::HitObjectQuery {
+            ref mut hit_object, ..
+        } => {
+            adjust(hit_object);
         }
         Expression::CooperativeLoad { ref mut data, .. } => {
             adjust(&mut data.pointer);
@@ -927,17 +934,75 @@ fn adjust_stmt(new_pos: &HandleVec<Expression, Handle<Expression>>, stmt: &mut S
                 ref mut descriptor,
                 ref mut payload,
                 ref mut groups,
+                ref mut time,
+                ref mut hit_object,
             } => {
                 adjust(acceleration_structure);
                 adjust(descriptor);
                 adjust(payload);
-                if let Some(groups) = groups {
+                if let Some(ref mut time) = *time {
+                    adjust(time);
+                }
+                if let Some(ref mut hit_object) = *hit_object {
+                    adjust(hit_object);
+                }
+                if let Some(ref mut groups) = *groups {
                     adjust(&mut groups.hit_group_offset);
                     adjust(&mut groups.miss_index);
+                    if let Some(ref mut stride) = groups.geometry_stride {
+                        adjust(stride);
+                    }
                 }
             }
             crate::RayPipelineFunction::IgnoreIntersection
             | crate::RayPipelineFunction::TerminateRay => {}
+            crate::RayPipelineFunction::ReportIntersection {
+                ref mut hit_t,
+                ref mut hit_kind,
+                ref mut result,
+            } => {
+                adjust(hit_t);
+                adjust(hit_kind);
+                adjust(result);
+            }
+            crate::RayPipelineFunction::ExecuteCallable {
+                ref mut index,
+                ref mut data,
+            } => {
+                adjust(index);
+                adjust(data);
+            }
+            crate::RayPipelineFunction::HitObjectRecordMiss {
+                ref mut hit_object,
+                ref mut miss_index,
+                ref mut descriptor,
+            } => {
+                adjust(hit_object);
+                adjust(miss_index);
+                adjust(descriptor);
+            }
+            crate::RayPipelineFunction::HitObjectRecordEmpty { ref mut hit_object } => {
+                adjust(hit_object);
+            }
+            crate::RayPipelineFunction::HitObjectExecute {
+                ref mut hit_object,
+                ref mut payload,
+            } => {
+                adjust(hit_object);
+                adjust(payload);
+            }
+            crate::RayPipelineFunction::ReorderThread {
+                ref mut hit_object,
+                ref mut hint,
+            } => {
+                if let Some(ref mut hit_object) = *hit_object {
+                    adjust(hit_object);
+                }
+                if let Some(ref mut hint) = *hint {
+                    adjust(&mut hint.hint);
+                    adjust(&mut hint.bits);
+                }
+            }
         },
         Statement::DebugPrintf {
             format: _,

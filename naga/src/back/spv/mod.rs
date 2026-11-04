@@ -541,6 +541,7 @@ enum LocalType {
     },
     AccelerationStructure,
     RayQuery,
+    HitObject,
 }
 
 /// A type encountered during SPIR-V generation.
@@ -599,6 +600,11 @@ enum LookupRayQueryFunction {
 enum LookupRaytracingFunction {
     TraceRay {
         payload: Handle<crate::GlobalVariable>,
+        /// Whether the trace takes a time, `OpTraceRayMotionNV`.
+        motion: bool,
+    },
+    ExecuteCallable {
+        data: Handle<crate::GlobalVariable>,
     },
 }
 
@@ -1119,28 +1125,23 @@ pub struct Options<'a> {
     /// for compute shaders where the developer guarantees non-zero divisors.
     pub emit_int_div_checks: bool,
 
-    /// The hit groups and miss stages of the ray tracing pipeline the
-    /// module is written for, if it is.
+    /// The hit groups, miss and callable stages of the ray tracing pipeline
+    /// the module is written for, if it is.
     ///
     /// Where given, a `traceRay`'s hit group offset is clamped below the
-    /// number of hit groups, and its miss index to the last miss stage, so
-    /// that no choice reads past the pipeline's shader binding table -- as
-    /// long as the table holds that many empty hit groups after the last,
-    /// which an instance's own index plus the offset can reach.
+    /// number of hit groups, its geometry stride to the pipeline's greatest,
+    /// and its miss index to the last miss stage, so that no choice reads
+    /// past the pipeline's shader binding table -- as long as the table
+    /// holds that many empty hit groups after the last, which an instance's
+    /// own index and its geometries' strides plus the offset can reach. An
+    /// `executeCallable`'s index is clamped to the last callable stage, and
+    /// without any it does nothing.
     pub ray_tracing_pipeline_groups: Option<RayTracingPipelineGroups>,
 }
 
-/// How many hit groups and miss stages a ray tracing pipeline has: see
-/// [`Options::ray_tracing_pipeline_groups`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serialize", derive(serde::Serialize))]
-#[cfg_attr(feature = "deserialize", derive(serde::Deserialize))]
-pub struct RayTracingPipelineGroups {
-    /// The number of hit groups.
-    pub hit_groups: u32,
-    /// The number of miss stages.
-    pub misses: u32,
-}
+/// How many hit groups, miss and callable stages a ray tracing pipeline
+/// has: see [`Options::ray_tracing_pipeline_groups`].
+pub use crate::back::RayTracingPipelineGroups;
 
 impl Default for Options<'_> {
     fn default() -> Self {
@@ -1233,6 +1234,9 @@ pub fn supported_capabilities() -> crate::valid::Capabilities {
         | Caps::TEXTURE_ATOMIC
         | Caps::TEXTURE_INT64_ATOMIC
         | Caps::RAY_HIT_VERTEX_POSITION
+        | Caps::RAY_TRACING_MOTION_BLUR
+        | Caps::RAY_TRACING_INVOCATION_REORDER
+        | Caps::RAY_TRACING_OPACITY_MICROMAP
         | Caps::SHADER_FLOAT16
         | Caps::SHADER_INT16
         // No TEXTURE_EXTERNAL

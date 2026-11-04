@@ -278,9 +278,13 @@ impl super::AddressSpace {
             // TaskPayload isn't always writable, but this is checked for elsewhere,
             // when not using multiple payloads and matching the entry payload is checked.
             crate::AddressSpace::TaskPayload => Sa::LOAD | Sa::STORE,
-            crate::AddressSpace::RayPayload | crate::AddressSpace::IncomingRayPayload => {
-                Sa::LOAD | Sa::STORE
-            }
+            crate::AddressSpace::RayPayload
+            | crate::AddressSpace::IncomingRayPayload
+            | crate::AddressSpace::CallableData
+            | crate::AddressSpace::IncomingCallableData => Sa::LOAD | Sa::STORE,
+            // Only the intersection stage writes it, which is checked for
+            // elsewhere.
+            crate::AddressSpace::RayHitAttribute => Sa::LOAD | Sa::STORE,
         }
     }
 }
@@ -993,6 +997,23 @@ impl crate::Module {
         })
     }
 
+    /// Whether any function traces a ray at a time.
+    pub fn uses_ray_tracing_motion_blur(&self) -> bool {
+        let functions = self.functions.iter().map(|(_, f)| f);
+        let entry_points = self.entry_points.iter().map(|ep| &ep.function);
+        functions.chain(entry_points).any(|func| {
+            any_statement(&func.body, &mut |stmt| {
+                matches!(
+                    *stmt,
+                    crate::Statement::RayPipelineFunction(crate::RayPipelineFunction::TraceRay {
+                        time: Some(_),
+                        ..
+                    })
+                )
+            })
+        })
+    }
+
     pub fn uses_ray_tracing(&self, ep_index: Option<usize>) -> RayTracingUses {
         let mut uses = RayTracingUses::default();
         // Whether this uses ray tracing (unknown whether the usage is pipelines or ray queries).
@@ -1026,6 +1047,8 @@ impl crate::Module {
                     | crate::ShaderStage::AnyHit
                     | crate::ShaderStage::ClosestHit
                     | crate::ShaderStage::Miss
+                    | crate::ShaderStage::Intersection
+                    | crate::ShaderStage::Callable
             ) {
                 uses.pipelines = true;
             } else {

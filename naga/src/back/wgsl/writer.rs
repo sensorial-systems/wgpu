@@ -246,7 +246,11 @@ impl<W: Write> Writer<W> {
                     ]
                 }
                 ShaderStage::RayGeneration => vec![Attribute::Stage(ShaderStage::RayGeneration)],
-                ShaderStage::AnyHit | ShaderStage::ClosestHit | ShaderStage::Miss => {
+                ShaderStage::Intersection => vec![Attribute::Stage(ShaderStage::Intersection)],
+                ShaderStage::AnyHit
+                | ShaderStage::ClosestHit
+                | ShaderStage::Miss
+                | ShaderStage::Callable => {
                     let payload_name = module.global_variables[ep.incoming_ray_payload.unwrap()]
                         .name
                         .clone()
@@ -296,6 +300,9 @@ impl<W: Write> Writer<W> {
             cooperative_matrix: bool,
             draw_index: bool,
             ray_tracing_pipeline: bool,
+            ray_tracing_motion_blur: bool,
+            invocation_reorder: bool,
+            vertex_return: bool,
             per_vertex: bool,
             binding_array: bool,
             debug_printf: bool,
@@ -345,9 +352,18 @@ impl<W: Write> Writer<W> {
                 | crate::BuiltIn::ObjectToWorld
                 | crate::BuiltIn::WorldToObject
                 | crate::BuiltIn::HitKind
-                | crate::BuiltIn::HitBarycentrics,
+                | crate::BuiltIn::HitBarycentrics
+                | crate::BuiltIn::IncomingRayFlags,
             ) => {
                 needed.ray_tracing_pipeline = true;
+            }
+            crate::Binding::BuiltIn(crate::BuiltIn::HitTriangleVertexPositions) => {
+                needed.ray_tracing_pipeline = true;
+                needed.vertex_return = true;
+            }
+            crate::Binding::BuiltIn(crate::BuiltIn::CurrentRayTime) => {
+                needed.ray_tracing_pipeline = true;
+                needed.ray_tracing_motion_blur = true;
             }
             _ => {}
         };
@@ -394,8 +410,14 @@ impl<W: Write> Writer<W> {
         }
 
         if module.global_variables.iter().any(|gv| {
-            gv.1.space == crate::AddressSpace::IncomingRayPayload
-                || gv.1.space == crate::AddressSpace::RayPayload
+            matches!(
+                gv.1.space,
+                crate::AddressSpace::IncomingRayPayload
+                    | crate::AddressSpace::RayPayload
+                    | crate::AddressSpace::RayHitAttribute
+                    | crate::AddressSpace::CallableData
+                    | crate::AddressSpace::IncomingCallableData
+            )
         }) {
             needed.ray_tracing_pipeline = true;
         }
@@ -407,14 +429,22 @@ impl<W: Write> Writer<W> {
                     | ShaderStage::AnyHit
                     | ShaderStage::ClosestHit
                     | ShaderStage::Miss
+                    | ShaderStage::Intersection
+                    | ShaderStage::Callable
             )
         }) {
             needed.ray_tracing_pipeline = true;
         }
 
         if module.global_variables.iter().any(|gv| {
-            gv.1.space == crate::AddressSpace::IncomingRayPayload
-                || gv.1.space == crate::AddressSpace::RayPayload
+            matches!(
+                gv.1.space,
+                crate::AddressSpace::IncomingRayPayload
+                    | crate::AddressSpace::RayPayload
+                    | crate::AddressSpace::RayHitAttribute
+                    | crate::AddressSpace::CallableData
+                    | crate::AddressSpace::IncomingCallableData
+            )
         }) {
             needed.ray_tracing_pipeline = true;
         }
@@ -426,12 +456,19 @@ impl<W: Write> Writer<W> {
                     | ShaderStage::AnyHit
                     | ShaderStage::ClosestHit
                     | ShaderStage::Miss
+                    | ShaderStage::Intersection
+                    | ShaderStage::Callable
             )
         }) {
             needed.ray_tracing_pipeline = true;
         }
 
         needed.debug_printf = module.uses_debug_printf();
+        needed.ray_tracing_motion_blur |= module.uses_ray_tracing_motion_blur();
+        needed.invocation_reorder = module
+            .types
+            .iter()
+            .any(|(_, ty)| ty.inner == TypeInner::HitObject);
 
         // Write required declarations
         let mut any_written = false;
@@ -473,6 +510,18 @@ impl<W: Write> Writer<W> {
         }
         if needed.ray_tracing_pipeline {
             writeln!(self.out, "enable wgpu_ray_tracing_pipeline;")?;
+            any_written = true;
+        }
+        if needed.ray_tracing_motion_blur {
+            writeln!(self.out, "enable wgpu_ray_tracing_motion_blur;")?;
+            any_written = true;
+        }
+        if needed.invocation_reorder {
+            writeln!(self.out, "enable wgpu_ray_tracing_invocation_reorder;")?;
+            any_written = true;
+        }
+        if needed.vertex_return {
+            writeln!(self.out, "enable wgpu_ray_query_vertex_return;")?;
             any_written = true;
         }
         if needed.per_vertex {
@@ -610,6 +659,8 @@ impl<W: Write> Writer<W> {
                         ShaderStage::AnyHit => "any_hit",
                         ShaderStage::ClosestHit => "closest_hit",
                         ShaderStage::Miss => "miss",
+                        ShaderStage::Intersection => "intersection",
+                        ShaderStage::Callable => "callable",
                     };
 
                     write!(out, "@{stage_str} ")?;
@@ -1233,16 +1284,36 @@ impl<W: Write> Writer<W> {
                     descriptor,
                     payload,
                     groups,
+                    time,
+                    hit_object,
                 } => {
-                    write!(self.out, "{level}traceRay(")?;
+                    let name = match (hit_object, time) {
+                        (None, None) => "traceRay",
+                        (None, Some(_)) => "traceRayMotion",
+                        (Some(_), None) => "hitObjectTraceRay",
+                        (Some(_), Some(_)) => "hitObjectTraceRayMotion",
+                    };
+                    write!(self.out, "{level}{name}(")?;
+                    if let Some(hit_object) = hit_object {
+                        self.write_expr(module, hit_object, func_ctx)?;
+                        write!(self.out, ", ")?;
+                    }
                     self.write_expr(module, acceleration_structure, func_ctx)?;
                     write!(self.out, ", ")?;
                     self.write_expr(module, descriptor, func_ctx)?;
                     write!(self.out, ", ")?;
+                    if let Some(time) = time {
+                        self.write_expr(module, time, func_ctx)?;
+                        write!(self.out, ", ")?;
+                    }
                     self.write_expr(module, payload, func_ctx)?;
                     if let Some(groups) = groups {
                         write!(self.out, ", ")?;
                         self.write_expr(module, groups.hit_group_offset, func_ctx)?;
+                        if let Some(stride) = groups.geometry_stride {
+                            write!(self.out, ", ")?;
+                            self.write_expr(module, stride, func_ctx)?;
+                        }
                         write!(self.out, ", ")?;
                         self.write_expr(module, groups.miss_index, func_ctx)?;
                     }
@@ -1253,6 +1324,74 @@ impl<W: Write> Writer<W> {
                 }
                 crate::RayPipelineFunction::TerminateRay => {
                     writeln!(self.out, "{level}terminateRay();")?
+                }
+                crate::RayPipelineFunction::ReportIntersection {
+                    hit_t,
+                    hit_kind,
+                    result,
+                } => {
+                    write!(self.out, "{level}")?;
+                    let res_name = Baked(result).to_string();
+                    self.start_named_expr(module, result, func_ctx, &res_name)?;
+                    self.named_expressions.insert(result, res_name);
+                    write!(self.out, "reportIntersection(")?;
+                    self.write_expr(module, hit_t, func_ctx)?;
+                    write!(self.out, ", ")?;
+                    self.write_expr(module, hit_kind, func_ctx)?;
+                    writeln!(self.out, ");")?
+                }
+                crate::RayPipelineFunction::ExecuteCallable { index, data } => {
+                    write!(self.out, "{level}executeCallable(")?;
+                    self.write_expr(module, index, func_ctx)?;
+                    write!(self.out, ", ")?;
+                    self.write_expr(module, data, func_ctx)?;
+                    writeln!(self.out, ");")?
+                }
+                crate::RayPipelineFunction::HitObjectRecordMiss {
+                    hit_object,
+                    miss_index,
+                    descriptor,
+                } => {
+                    write!(self.out, "{level}hitObjectRecordMiss(")?;
+                    self.write_expr(module, hit_object, func_ctx)?;
+                    write!(self.out, ", ")?;
+                    self.write_expr(module, miss_index, func_ctx)?;
+                    write!(self.out, ", ")?;
+                    self.write_expr(module, descriptor, func_ctx)?;
+                    writeln!(self.out, ");")?
+                }
+                crate::RayPipelineFunction::HitObjectRecordEmpty { hit_object } => {
+                    write!(self.out, "{level}hitObjectRecordEmpty(")?;
+                    self.write_expr(module, hit_object, func_ctx)?;
+                    writeln!(self.out, ");")?
+                }
+                crate::RayPipelineFunction::HitObjectExecute {
+                    hit_object,
+                    payload,
+                } => {
+                    write!(self.out, "{level}hitObjectExecute(")?;
+                    self.write_expr(module, hit_object, func_ctx)?;
+                    write!(self.out, ", ")?;
+                    self.write_expr(module, payload, func_ctx)?;
+                    writeln!(self.out, ");")?
+                }
+                crate::RayPipelineFunction::ReorderThread { hit_object, hint } => {
+                    match hit_object {
+                        Some(hit_object) => {
+                            write!(self.out, "{level}reorderThread(")?;
+                            self.write_expr(module, hit_object, func_ctx)?;
+                            if hint.is_some() {
+                                write!(self.out, ", ")?;
+                            }
+                        }
+                        None => write!(self.out, "{level}reorderThreadHint(")?,
+                    }
+                    if let Some(hint) = hint {
+                        self.write_expr(module, hint.hint, func_ctx)?;
+                        write!(self.out, ", ")?;
+                        self.write_expr(module, hint.bits, func_ctx)?;
+                    }
+                    writeln!(self.out, ");")?
                 }
             },
             Statement::DebugPrintf {
@@ -1955,13 +2094,20 @@ impl<W: Write> Writer<W> {
 
                 write!(self.out, ")")?
             }
+            Expression::HitObjectQuery { hit_object, query } => {
+                write!(self.out, "{}(", query.to_wgsl())?;
+                self.write_expr(module, hit_object, func_ctx)?;
+                write!(self.out, ")")?
+            }
             // Not supported yet
             Expression::RayQueryGetIntersection { .. }
-            | Expression::RayQueryVertexPositions { .. } => unreachable!(),
+            | Expression::RayQueryVertexPositions { .. }
+            | Expression::RayQueryCandidateAabbOpaque { .. } => unreachable!(),
             // Nothing to do here, since call expression already cached
             Expression::CallResult(_)
             | Expression::AtomicResult { .. }
             | Expression::RayQueryProceedResult
+            | Expression::ReportIntersectionResult
             | Expression::SubgroupBallotResult
             | Expression::SubgroupOperationResult { .. }
             | Expression::WorkGroupUniformLoadResult { .. } => {}

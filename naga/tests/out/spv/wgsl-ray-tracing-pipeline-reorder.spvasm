@@ -1,0 +1,211 @@
+; SPIR-V
+; Version: 1.4
+; Generator: rspirv
+; Bound: 153
+OpCapability Shader
+OpCapability RayTracingKHR
+OpCapability ShaderInvocationReorderNV
+OpCapability RayTracingMotionBlurNV
+OpExtension "SPV_KHR_ray_tracing"
+OpExtension "SPV_NV_shader_invocation_reorder"
+OpExtension "SPV_NV_ray_tracing_motion_blur"
+%1 = OpExtInstImport "GLSL.std.450"
+OpMemoryModel Logical GLSL450
+OpEntryPoint RayGenerationKHR %21 "ray_gen_main" %18 %11 %13
+OpEntryPoint ClosestHitKHR %132 "closest_hit_main" %11 %13 %15
+OpEntryPoint MissKHR %150 "miss_main" %15
+OpMemberDecorate %9 0 Offset 0
+OpMemberDecorate %9 1 Offset 4
+OpMemberDecorate %9 2 Offset 8
+OpMemberDecorate %9 3 Offset 12
+OpMemberDecorate %9 4 Offset 16
+OpMemberDecorate %9 5 Offset 32
+OpDecorate %13 DescriptorSet 0
+OpDecorate %13 Binding 0
+OpDecorate %18 BuiltIn LaunchIdKHR
+%2 = OpTypeVoid
+%3 = OpTypeFloat 32
+%4 = OpTypeVector %3 4
+%5 = OpTypeAccelerationStructureKHR
+%6 = OpTypeInt 32 0
+%7 = OpTypeVector %6 3
+%8 = OpTypeVector %3 3
+%9 = OpTypeStruct %6 %6 %3 %3 %8 %8
+%10 = OpTypeHitObjectNV
+%12 = OpTypePointer RayPayloadKHR %4
+%11 = OpVariable  %12  RayPayloadKHR
+%14 = OpTypePointer UniformConstant %5
+%13 = OpVariable  %14  UniformConstant
+%16 = OpTypePointer IncomingRayPayloadKHR %4
+%15 = OpVariable  %16  IncomingRayPayloadKHR
+%19 = OpTypePointer Input %7
+%18 = OpVariable  %19  Input
+%22 = OpTypeFunction %2
+%24 = OpConstant  %6  0
+%25 = OpConstant  %6  255
+%26 = OpConstant  %3  0.01
+%27 = OpConstant  %3  100
+%28 = OpConstant  %3  0
+%29 = OpConstantComposite  %8  %28 %28 %28
+%30 = OpConstant  %3  1
+%31 = OpConstantComposite  %8  %28 %30 %28
+%32 = OpConstantComposite  %9  %24 %25 %26 %27 %29 %31
+%33 = OpConstant  %6  1
+%34 = OpConstant  %3  0.5
+%35 = OpConstant  %6  4
+%36 = OpConstant  %6  2
+%38 = OpTypePointer Function %10
+%40 = OpConstant  %6  15
+%45 = OpConstant  %6  65535
+%48 = OpTypeBool
+%49 = OpTypeVector %48 3
+%98 = OpTypeMatrix %8 4
+%151 = OpConstantComposite  %4  %28 %28 %28 %28
+%21 = OpFunction  %2  None %22
+%17 = OpLabel
+%37 = OpVariable  %38  Function
+%20 = OpLoad  %7  %18
+%23 = OpLoad  %5  %13
+OpBranch %39
+%39 = OpLabel
+%41 = OpBitwiseAnd  %6  %24 %40
+%42 = OpExtInst  %6  %1 UMin %41 %33
+%43 = OpBitwiseAnd  %6  %24 %40
+%44 = OpExtInst  %6  %1 UMin %43 %33
+%46 = OpBitwiseAnd  %6  %24 %45
+%47 = OpExtInst  %6  %1 UMin %46 %33
+%50 = OpCompositeExtract  %6  %32 0
+%51 = OpCompositeExtract  %6  %32 1
+%52 = OpCompositeExtract  %3  %32 2
+%53 = OpCompositeExtract  %3  %32 3
+%54 = OpCompositeExtract  %8  %32 4
+%55 = OpCompositeExtract  %8  %32 5
+OpHitObjectTraceRayNV %37 %23 %50 %51 %42 %44 %47 %54 %52 %55 %53 %11
+%56 = OpBitwiseAnd  %6  %33 %40
+%57 = OpExtInst  %6  %1 UMin %56 %33
+%58 = OpBitwiseAnd  %6  %24 %40
+%59 = OpExtInst  %6  %1 UMin %58 %33
+%60 = OpBitwiseAnd  %6  %33 %45
+%61 = OpExtInst  %6  %1 UMin %60 %33
+%62 = OpCompositeExtract  %6  %32 0
+%63 = OpCompositeExtract  %6  %32 1
+%64 = OpCompositeExtract  %3  %32 2
+%65 = OpCompositeExtract  %3  %32 3
+%66 = OpCompositeExtract  %8  %32 4
+%67 = OpCompositeExtract  %8  %32 5
+OpHitObjectTraceRayNV %37 %23 %62 %63 %57 %59 %61 %66 %64 %67 %65 %11
+%68 = OpBitwiseAnd  %6  %33 %40
+%69 = OpExtInst  %6  %1 UMin %68 %33
+%70 = OpBitwiseAnd  %6  %33 %40
+%71 = OpExtInst  %6  %1 UMin %70 %33
+%72 = OpBitwiseAnd  %6  %33 %45
+%73 = OpExtInst  %6  %1 UMin %72 %33
+%74 = OpCompositeExtract  %6  %32 0
+%75 = OpCompositeExtract  %6  %32 1
+%76 = OpCompositeExtract  %3  %32 2
+%77 = OpCompositeExtract  %3  %32 3
+%78 = OpCompositeExtract  %8  %32 4
+%79 = OpCompositeExtract  %8  %32 5
+OpHitObjectTraceRayMotionNV %37 %23 %74 %75 %69 %71 %73 %78 %76 %79 %77 %34 %11
+%80 = OpHitObjectIsHitNV  %48  %37
+OpSelectionMerge %81 None
+OpBranchConditional %80 %82 %83
+%82 = OpLabel
+%84 = OpHitObjectGetRayTMaxNV  %3  %37
+%85 = OpHitObjectGetRayTMinNV  %3  %37
+%86 = OpFSub  %3  %84 %85
+%87 = OpHitObjectGetInstanceIdNV  %6  %37
+%88 = OpHitObjectGetInstanceCustomIndexNV  %6  %37
+%89 = OpIAdd  %6  %87 %88
+%90 = OpHitObjectGetGeometryIndexNV  %6  %37
+%91 = OpHitObjectGetPrimitiveIndexNV  %6  %37
+%92 = OpIAdd  %6  %90 %91
+%93 = OpHitObjectGetHitKindNV  %6  %37
+%94 = OpIAdd  %6  %92 %93
+%95 = OpHitObjectGetWorldRayOriginNV  %8  %37
+%96 = OpHitObjectGetWorldRayDirectionNV  %8  %37
+%97 = OpFAdd  %8  %95 %96
+%99 = OpHitObjectGetObjectToWorldNV  %98  %37
+%100 = OpCompositeConstruct  %4  %97 %30
+%101 = OpMatrixTimesVector  %8  %99 %100
+%102 = OpHitObjectGetWorldToObjectNV  %98  %37
+%103 = OpCompositeConstruct  %4  %97 %28
+%104 = OpMatrixTimesVector  %8  %102 %103
+%105 = OpFAdd  %8  %101 %104
+%106 = OpIAdd  %6  %89 %94
+%107 = OpConvertUToF  %3  %106
+%108 = OpFAdd  %3  %86 %107
+%109 = OpCompositeConstruct  %4  %105 %108
+OpStore %11 %109
+OpBranch %81
+%83 = OpLabel
+%110 = OpHitObjectIsMissNV  %48  %37
+OpSelectionMerge %111 None
+OpBranchConditional %110 %112 %113
+%112 = OpLabel
+%114 = OpBitwiseAnd  %6  %24 %40
+%115 = OpExtInst  %6  %1 UMin %114 %33
+%116 = OpBitwiseAnd  %6  %24 %40
+%117 = OpExtInst  %6  %1 UMin %116 %33
+%118 = OpBitwiseAnd  %6  %33 %45
+%119 = OpExtInst  %6  %1 UMin %118 %33
+%120 = OpCompositeExtract  %6  %32 0
+%121 = OpCompositeExtract  %6  %32 1
+%122 = OpCompositeExtract  %3  %32 2
+%123 = OpCompositeExtract  %3  %32 3
+%124 = OpCompositeExtract  %8  %32 4
+%125 = OpCompositeExtract  %8  %32 5
+OpHitObjectRecordMissNV %37 %119 %124 %122 %125 %123
+OpBranch %111
+%113 = OpLabel
+%126 = OpHitObjectIsEmptyNV  %48  %37
+OpSelectionMerge %127 None
+OpBranchConditional %126 %128 %127
+%128 = OpLabel
+OpHitObjectRecordEmptyNV %37
+OpBranch %127
+%127 = OpLabel
+OpBranch %111
+%111 = OpLabel
+OpBranch %81
+%81 = OpLabel
+OpReorderThreadWithHitObjectNV %37
+%129 = OpCompositeExtract  %6  %20 0
+OpReorderThreadWithHitObjectNV %37 %129 %35
+%130 = OpCompositeExtract  %6  %20 1
+OpReorderThreadWithHintNV %130 %36
+OpHitObjectExecuteShaderNV %37 %11
+OpReturn
+OpFunctionEnd
+%132 = OpFunction  %2  None %22
+%131 = OpLabel
+%134 = OpVariable  %38  Function
+%133 = OpLoad  %5  %13
+OpBranch %135
+%135 = OpLabel
+%136 = OpBitwiseAnd  %6  %24 %40
+%137 = OpExtInst  %6  %1 UMin %136 %33
+%138 = OpBitwiseAnd  %6  %24 %40
+%139 = OpExtInst  %6  %1 UMin %138 %33
+%140 = OpBitwiseAnd  %6  %24 %45
+%141 = OpExtInst  %6  %1 UMin %140 %33
+%142 = OpCompositeExtract  %6  %32 0
+%143 = OpCompositeExtract  %6  %32 1
+%144 = OpCompositeExtract  %3  %32 2
+%145 = OpCompositeExtract  %3  %32 3
+%146 = OpCompositeExtract  %8  %32 4
+%147 = OpCompositeExtract  %8  %32 5
+OpHitObjectTraceRayNV %134 %133 %142 %143 %137 %139 %141 %146 %144 %147 %145 %15
+OpHitObjectRecordEmptyNV %134
+OpHitObjectExecuteShaderNV %134 %11
+%148 = OpLoad  %4  %11
+OpStore %15 %148
+OpReturn
+OpFunctionEnd
+%150 = OpFunction  %2  None %22
+%149 = OpLabel
+OpBranch %152
+%152 = OpLabel
+OpStore %15 %151
+OpReturn
+OpFunctionEnd

@@ -13,7 +13,7 @@
     entry_points: [
         (
             flags: ("EXPRESSIONS | BLOCKS | CONTROL_FLOW_UNIFORMITY | STRUCT_LAYOUTS | CONSTANTS | BINDINGS"),
-            available_stages: ("VERTEX | FRAGMENT | COMPUTE | MESH | TASK | RAY_GENERATION | ANY_HIT | CLOSEST_HIT | MISS"),
+            available_stages: ("VERTEX | FRAGMENT | COMPUTE | MESH | TASK | RAY_GENERATION | ANY_HIT | CLOSEST_HIT | MISS | INTERSECTION | CALLABLE"),
             uniformity: (
                 non_uniform_result: Some(1),
                 requirements: (""),
@@ -158,7 +158,7 @@
         ),
         (
             flags: ("EXPRESSIONS | BLOCKS | CONTROL_FLOW_UNIFORMITY | STRUCT_LAYOUTS | CONSTANTS | BINDINGS"),
-            available_stages: ("VERTEX | FRAGMENT | COMPUTE | MESH | TASK | RAY_GENERATION | ANY_HIT | CLOSEST_HIT | MISS"),
+            available_stages: ("VERTEX | FRAGMENT | COMPUTE | MESH | TASK | RAY_GENERATION | ANY_HIT | CLOSEST_HIT | MISS | INTERSECTION | CALLABLE"),
             uniformity: (
                 non_uniform_result: Some(0),
                 requirements: (""),

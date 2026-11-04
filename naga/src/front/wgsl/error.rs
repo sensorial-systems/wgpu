@@ -397,6 +397,7 @@ pub(crate) enum Error<'a> {
     InvalidAtomicOperandType(Span),
     InvalidAtomicAccess(Span),
     InvalidRayQueryPointer(Span),
+    InvalidHitObjectPointer(Span),
     NotPointer(Span),
     NotReference(&'static str, Span),
     InvalidAssignment {
@@ -718,6 +719,7 @@ impl<'a> Error<'a> {
                 | Error::InvalidAtomicOperandType(span)
                 | Error::InvalidAtomicAccess(span)
                 | Error::InvalidRayQueryPointer(span)
+                | Error::InvalidHitObjectPointer(span)
                 | Error::NotPointer(span)
                 | Error::InvalidSwitchSelector { span }
                 | Error::InvalidSwitchCase { span }
@@ -791,6 +793,10 @@ impl<'a> Error<'a> {
                     Error::InvalidRayQueryPointer(_) => (
                         "ray query operation is done on a pointer to a non-ray-query",
                         "ray query pointer is invalid"
+                    ),
+                    Error::InvalidHitObjectPointer(_) => (
+                        "hit object operation is done on something other than a pointer to a hit object",
+                        "hit object pointer is invalid"
                     ),
                     Error::NotPointer(_) => (
                         "the operand of the `*` operator must be a pointer",

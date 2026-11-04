@@ -420,6 +420,8 @@ impl StatementGraph {
                         descriptor,
                         payload,
                         groups,
+                        time,
+                        hit_object,
                     } => {
                         self.dependencies.push((
                             id,
@@ -428,15 +430,75 @@ impl StatementGraph {
                         ));
                         self.dependencies.push((id, descriptor, "descriptor"));
                         self.dependencies.push((id, payload, "payload"));
+                        if let Some(time) = time {
+                            self.dependencies.push((id, time, "time"));
+                        }
+                        if let Some(hit_object) = hit_object {
+                            self.dependencies.push((id, hit_object, "hit_object"));
+                        }
                         if let Some(groups) = groups {
+                            self.dependencies.push((
+                                id,
+                                groups.hit_group_offset,
+                                "hit_group_offset",
+                            ));
                             self.dependencies
-                                .push((id, groups.hit_group_offset, "hit_group_offset"));
-                            self.dependencies.push((id, groups.miss_index, "miss_index"));
+                                .push((id, groups.miss_index, "miss_index"));
+                            if let Some(stride) = groups.geometry_stride {
+                                self.dependencies.push((id, stride, "geometry_stride"));
+                            }
                         }
                         "TraceRay"
                     }
                     crate::RayPipelineFunction::IgnoreIntersection => "IgnoreIntersection",
                     crate::RayPipelineFunction::TerminateRay => "TerminateRay",
+                    crate::RayPipelineFunction::ReportIntersection {
+                        hit_t,
+                        hit_kind,
+                        result,
+                    } => {
+                        self.dependencies.push((id, hit_t, "hit_t"));
+                        self.dependencies.push((id, hit_kind, "hit_kind"));
+                        self.emits.push((id, result));
+                        "ReportIntersection"
+                    }
+                    crate::RayPipelineFunction::ExecuteCallable { index, data } => {
+                        self.dependencies.push((id, index, "index"));
+                        self.dependencies.push((id, data, "data"));
+                        "ExecuteCallable"
+                    }
+                    crate::RayPipelineFunction::HitObjectRecordMiss {
+                        hit_object,
+                        miss_index,
+                        descriptor,
+                    } => {
+                        self.dependencies.push((id, hit_object, "hit_object"));
+                        self.dependencies.push((id, miss_index, "miss_index"));
+                        self.dependencies.push((id, descriptor, "descriptor"));
+                        "HitObjectRecordMiss"
+                    }
+                    crate::RayPipelineFunction::HitObjectRecordEmpty { hit_object } => {
+                        self.dependencies.push((id, hit_object, "hit_object"));
+                        "HitObjectRecordEmpty"
+                    }
+                    crate::RayPipelineFunction::HitObjectExecute {
+                        hit_object,
+                        payload,
+                    } => {
+                        self.dependencies.push((id, hit_object, "hit_object"));
+                        self.dependencies.push((id, payload, "payload"));
+                        "HitObjectExecute"
+                    }
+                    crate::RayPipelineFunction::ReorderThread { hit_object, hint } => {
+                        if let Some(hit_object) = hit_object {
+                            self.dependencies.push((id, hit_object, "hit_object"));
+                        }
+                        if let Some(hint) = hint {
+                            self.dependencies.push((id, hint.hint, "hint"));
+                            self.dependencies.push((id, hint.bits, "bits"));
+                        }
+                        "ReorderThread"
+                    }
                 },
                 S::DebugPrintf {
                     format: _,
@@ -773,6 +835,7 @@ fn write_function_expressions(
                 ("ArrayLength".into(), 7)
             }
             E::RayQueryProceedResult => ("rayQueryProceedResult".into(), 4),
+            E::ReportIntersectionResult => ("reportIntersectionResult".into(), 4),
             E::RayQueryGetIntersection { query, committed } => {
                 edges.insert("", query);
                 let ty = if committed { "Committed" } else { "Candidate" };
@@ -780,6 +843,14 @@ fn write_function_expressions(
             }
             E::SubgroupBallotResult => ("SubgroupBallotResult".into(), 4),
             E::SubgroupOperationResult { .. } => ("SubgroupOperationResult".into(), 4),
+            E::RayQueryCandidateAabbOpaque { query } => {
+                edges.insert("", query);
+                ("rayQueryCandidateAabbOpaque".into(), 4)
+            }
+            E::HitObjectQuery { hit_object, query } => {
+                edges.insert("", hit_object);
+                (query.to_wgsl().into(), 4)
+            }
             E::RayQueryVertexPositions { query, committed } => {
                 edges.insert("", query);
                 let ty = if committed { "Committed" } else { "Candidate" };

@@ -375,6 +375,20 @@ pub enum AddressSpace {
     /// Each entrypoint may reference only one variable in this scope, as
     /// only one may be passed as a payload.
     IncomingRayPayload,
+    /// A procedural hit's attributes: written by the intersection stage
+    /// that reports the hit, read by the any-hit and closest-hit stages
+    /// called for it.
+    ///
+    /// Each entrypoint may reference only one variable in this scope.
+    RayHitAttribute,
+    /// Data a stage hands to a callable stage, in
+    /// [`RayPipelineFunction::ExecuteCallable`].
+    CallableData,
+    /// The data a callable stage was called with.
+    ///
+    /// Each callable stage references exactly one variable in this scope,
+    /// as its [`EntryPoint::incoming_ray_payload`].
+    IncomingCallableData,
 }
 
 /// Built-in inputs and outputs.
@@ -508,6 +522,17 @@ pub enum BuiltIn {
     /// coordinates of the hit point on the triangle. The first can be computed as
     /// `1.0 - x - y`. Only meaningful if the hit was a triangle.
     HitBarycentrics,
+    /// Read in intersection, any hit, closest hit and miss shaders, the ray
+    /// flags the trace that called the stage was given.
+    IncomingRayFlags,
+    /// Read in closest hit and any hit shaders, the object space positions of
+    /// the hit triangle's three vertices, an `array<vec3<f32>, 3>`. The
+    /// triangle's acceleration structure must allow vertex return.
+    HitTriangleVertexPositions,
+    /// Read in intersection, any hit, closest hit and miss shaders, the time
+    /// the trace that called the stage was given, between 0 and 1: see
+    /// [`RayPipelineFunction::TraceRay::time`].
+    CurrentRayTime,
 }
 
 /// Number of bytes per scalar.
@@ -994,6 +1019,11 @@ pub enum TypeInner {
 
     /// Locally used handle for ray queries.
     RayQuery { vertex_return: bool },
+
+    /// Locally used handle for a hit object: what a trace found -- a hit, a
+    /// miss, or nothing -- kept to be reordered by and executed later. See
+    /// [`RayPipelineFunction::TraceRay::hit_object`].
+    HitObject,
 
     /// Array of bindings.
     ///
@@ -1922,6 +1952,27 @@ pub enum Expression {
         committed: bool,
     },
 
+    /// Whether the candidate intersection `query` is paused at -- a
+    /// procedural primitive's box -- is opaque, its geometry's, instance's and
+    /// ray's flags considered: a `bool`.
+    ///
+    /// Only meaningful where the candidate's kind is
+    /// [`RayQueryIntersection::Aabb`].
+    RayQueryCandidateAabbOpaque { query: Handle<Expression> },
+
+    /// Result of a [`ReportIntersection`] ray pipeline function: whether the
+    /// hit was accepted.
+    ///
+    /// [`ReportIntersection`]: RayPipelineFunction::ReportIntersection
+    ReportIntersectionResult,
+
+    /// What a hit object holds.
+    HitObjectQuery {
+        /// A pointer to a [`HitObject`](TypeInner::HitObject).
+        hit_object: Handle<Expression>,
+        query: HitObjectQuery,
+    },
+
     /// Result of a [`SubgroupBallot`] statement.
     ///
     /// [`SubgroupBallot`]: Statement::SubgroupBallot
@@ -2562,7 +2613,9 @@ pub struct EntryPoint {
     /// The unique global variable used as a task payload from task shader to mesh shader
     pub task_payload: Option<Handle<GlobalVariable>>,
     /// The unique global variable used as an incoming ray payload going into any hit, closest hit and miss shaders.
-    /// Unlike the outgoing ray payload, an incoming ray payload must be unique
+    /// Unlike the outgoing ray payload, an incoming ray payload must be unique.
+    ///
+    /// For a callable shader, its incoming callable data.
     pub incoming_ray_payload: Option<Handle<GlobalVariable>>,
 }
 
@@ -2691,6 +2744,9 @@ bitflags::bitflags! {
         const SKIP_TRIANGLES = 0x100;
         /// Skip axis-aligned bounding boxes.
         const SKIP_AABBS = 0x200;
+        /// Opacity micromaps' unknown micro-triangles are what they lean to: transparent or
+        /// opaque, never non-opaque.
+        const FORCE_OPACITY_MICROMAP_2_STATE = 0x400;
     }
 }
 
@@ -2808,6 +2864,20 @@ pub enum RayPipelineFunction {
         /// Which hit group and miss stage the trace calls, if not the first:
         /// see [`RayGroups`].
         groups: Option<RayGroups>,
+
+        /// A `f32`, the time at which the ray is traced through structures
+        /// whose geometry and instances move: 0 is where they start, 1 where
+        /// they end. A trace without one is at time 0.
+        time: Option<Handle<Expression>>,
+
+        /// A pointer to a [`HitObject`] local variable that the trace's hit
+        /// or miss goes into, instead of the closest-hit or miss stage
+        /// running: the any-hit and intersection stages run as the trace
+        /// searches, the others where the hit object is executed
+        /// ([`RayPipelineFunction::HitObjectExecute`]).
+        ///
+        /// [`HitObject`]: TypeInner::HitObject
+        hit_object: Option<Handle<Expression>>,
     },
 
     /// Passes over the candidate intersection an any-hit stage is
@@ -2822,19 +2892,154 @@ pub enum RayPipelineFunction {
     ///
     /// Valid only in [`ShaderStage::AnyHit`].
     TerminateRay,
+
+    /// Reports a hit on the procedural primitive an intersection stage is
+    /// testing, at `hit_t` along the ray with the stage's own `hit_kind`.
+    /// The hit stands if it lies within the ray's current bounds and the hit
+    /// group's any-hit stage, if any, does not ignore it; `result` is whether
+    /// it stood. The stage's [`RayHitAttribute`] variable is the hit's
+    /// attributes.
+    ///
+    /// Valid only in [`ShaderStage::Intersection`].
+    ///
+    /// [`RayHitAttribute`]: AddressSpace::RayHitAttribute
+    ReportIntersection {
+        /// A `f32`, the hit's distance along the ray.
+        hit_t: Handle<Expression>,
+        /// A `u32`, what the any-hit and closest-hit stages read as their
+        /// `hit_kind`: below 128.
+        hit_kind: Handle<Expression>,
+        /// A [`ReportIntersectionResult`] expression, a `bool`.
+        ///
+        /// [`ReportIntersectionResult`]: Expression::ReportIntersectionResult
+        result: Handle<Expression>,
+    },
+
+    /// Runs the pipeline's callable stage at `index`, handing it `data`: a
+    /// pointer to a variable in the [`CallableData`] or
+    /// [`IncomingCallableData`] address space, which the callable stage
+    /// reads and writes as its incoming callable data.
+    ///
+    /// Valid in ray generation, closest hit, miss and callable stages.
+    ///
+    /// [`CallableData`]: AddressSpace::CallableData
+    /// [`IncomingCallableData`]: AddressSpace::IncomingCallableData
+    ExecuteCallable {
+        /// A `u32`, which callable stage.
+        index: Handle<Expression>,
+        /// A pointer to the data.
+        data: Handle<Expression>,
+    },
+
+    /// Makes the hit object a miss of the ray `descriptor`, calling the
+    /// pipeline's miss stage at `miss_index` when executed, without tracing.
+    ///
+    /// Valid where a trace is.
+    HitObjectRecordMiss {
+        /// A pointer to a [`HitObject`](TypeInner::HitObject).
+        hit_object: Handle<Expression>,
+        /// A `u32`, which miss stage.
+        miss_index: Handle<Expression>,
+        /// A `RayDesc`, the ray that missed.
+        descriptor: Handle<Expression>,
+    },
+
+    /// Empties the hit object: executing it runs nothing.
+    ///
+    /// Valid where a trace is.
+    HitObjectRecordEmpty {
+        /// A pointer to a [`HitObject`](TypeInner::HitObject).
+        hit_object: Handle<Expression>,
+    },
+
+    /// Runs the closest-hit stage of the hit object's hit, or the miss stage
+    /// of its miss, with `payload` as its incoming payload; nothing for an
+    /// empty one.
+    ///
+    /// Valid where a trace is.
+    HitObjectExecute {
+        /// A pointer to a [`HitObject`](TypeInner::HitObject).
+        hit_object: Handle<Expression>,
+        /// A pointer in the ray_payload or incoming_ray_payload address
+        /// spaces, as a trace's.
+        payload: Handle<Expression>,
+    },
+
+    /// Lets the device reorder the invocations of the launch so that those
+    /// that go on alike run together: by what their hit objects hold, by a
+    /// hint of the shader's own, or both. Nothing else about any invocation
+    /// changes.
+    ///
+    /// Valid only in [`ShaderStage::RayGeneration`].
+    ReorderThread {
+        /// A pointer to a [`HitObject`](TypeInner::HitObject) to reorder by.
+        hit_object: Option<Handle<Expression>>,
+        /// A hint to reorder by: its value's low bits.
+        hint: Option<ReorderHint>,
+    },
+}
+
+/// A hint a [`RayPipelineFunction::ReorderThread`] reorders by.
+#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub struct ReorderHint {
+    /// A `u32`, the hint.
+    pub hint: Handle<Expression>,
+    /// A `u32`, how many of the hint's low bits matter: at most 32.
+    pub bits: Handle<Expression>,
+}
+
+/// What a [`Expression::HitObjectQuery`] reads of a hit object.
+#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum HitObjectQuery {
+    /// A `bool`: whether it holds a hit.
+    IsHit,
+    /// A `bool`: whether it holds a miss.
+    IsMiss,
+    /// A `bool`: whether it holds nothing.
+    IsEmpty,
+    /// A `f32`: the ray's least distance.
+    RayTMin,
+    /// A `f32`: the ray's greatest distance, a hit's own.
+    RayTMax,
+    /// A `u32`: the hit instance's index.
+    InstanceIndex,
+    /// A `u32`: the hit instance's custom data.
+    InstanceCustomData,
+    /// A `u32`: the hit geometry's index.
+    GeometryIndex,
+    /// A `u32`: the hit primitive's index.
+    PrimitiveIndex,
+    /// A `u32`: the hit's kind, as `hit_kind` reads it.
+    HitKind,
+    /// A `vec3<f32>`: the ray's origin in the world.
+    WorldRayOrigin,
+    /// A `vec3<f32>`: the ray's direction in the world.
+    WorldRayDirection,
+    /// A `mat4x3<f32>`: the hit instance's object-to-world transform.
+    ObjectToWorld,
+    /// A `mat4x3<f32>`: the hit instance's world-to-object transform.
+    WorldToObject,
 }
 
 /// The hit group and miss stage a [`RayPipelineFunction::TraceRay`] calls.
 ///
 /// A ray tracing pipeline holds a list of hit groups and a list of miss
 /// stages. A trace calls the hit group at the hit instance's own index plus
-/// `hit_group_offset`, and the miss stage at `miss_index`; without these,
-/// both are zero.
+/// `hit_group_offset`, plus the hit geometry's index within its mesh times
+/// `geometry_stride`, and the miss stage at `miss_index`; without these, all
+/// are zero.
 ///
-/// Out of range, neither is undefined behavior where the backend is told the
+/// Out of range, none is undefined behavior where the backend is told the
 /// pipeline's counts (as wgpu does): the offset is clamped to one less than
 /// the number of hit groups, past which the pipeline's shader binding table
-/// holds empty hit groups, and the miss index to the last miss stage.
+/// holds empty hit groups, the stride to the pipeline's greatest, and the
+/// miss index to the last miss stage.
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
@@ -2842,6 +3047,9 @@ pub enum RayPipelineFunction {
 pub struct RayGroups {
     /// A `u32` added to the hit instance's hit group index.
     pub hit_group_offset: Handle<Expression>,
+    /// A `u32`, how many hit groups apart one geometry of a mesh is from the
+    /// next; `None` for zero.
+    pub geometry_stride: Option<Handle<Expression>>,
     /// A `u32`, the index of the miss stage.
     pub miss_index: Handle<Expression>,
 }

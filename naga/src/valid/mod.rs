@@ -226,6 +226,12 @@ bitflags::bitflags! {
         const LINEAR_INTERPOLATION = 1 << 44;
         /// Support for `debugPrintf`.
         const DEBUG_PRINTF = 1 << 45;
+        /// Support for rays traced at a time, through moving structures.
+        const RAY_TRACING_MOTION_BLUR = 1 << 46;
+        /// Support for hit objects, and invocations reordered by them.
+        const RAY_TRACING_INVOCATION_REORDER = 1 << 47;
+        /// Support for rays that force opacity micromaps to two states.
+        const RAY_TRACING_OPACITY_MICROMAP = 1 << 48;
     }
 }
 
@@ -248,6 +254,9 @@ impl Capabilities {
             Self::RAY_HIT_VERTEX_POSITION => Some(Ext::WgpuRayQueryVertexReturn),
             Self::COOPERATIVE_MATRIX => Some(Ext::WgpuCooperativeMatrix),
             Self::RAY_TRACING_PIPELINE => Some(Ext::WgpuRayTracingPipeline),
+            Self::RAY_TRACING_MOTION_BLUR => Some(Ext::WgpuRayTracingMotionBlur),
+            Self::RAY_TRACING_INVOCATION_REORDER => Some(Ext::WgpuRayTracingInvocationReorder),
+            Self::RAY_TRACING_OPACITY_MICROMAP => Some(Ext::WgpuRayTracingOpacityMicromap),
             Self::PER_VERTEX => Some(Ext::WgpuPerVertex),
             Self::BUFFER_BINDING_ARRAY
             | Self::BUFFER_BINDING_ARRAY_NON_UNIFORM_INDEXING
@@ -342,6 +351,8 @@ bitflags::bitflags! {
         const ANY_HIT = 0x40;
         const CLOSEST_HIT = 0x80;
         const MISS = 0x100;
+        const INTERSECTION = 0x200;
+        const CALLABLE = 0x400;
         const COMPUTE_LIKE = Self::COMPUTE.bits() | Self::TASK.bits() | Self::MESH.bits();
     }
 }
@@ -417,8 +428,8 @@ pub struct Validator {
     needs_visit: HandleSet<crate::Expression>,
 
     /// Whether any trace rays call is called, and whether all have vertex return.
-    /// If one call doesn't use vertex ruturn, builtins for triangle vertex positions
-    /// (not yet implemented) are not allowed.
+    /// If one call doesn't use vertex return, the builtin for triangle vertex
+    /// positions is not allowed.
     trace_rays_vertex_return: TraceRayVertexReturnState,
 
     /// The type of the ray payload, this must always be the same type in a particular
@@ -433,10 +444,6 @@ enum TraceRayVertexReturnState {
     /// Trace ray calls have been found, at least
     /// one uses an acceleration structure that
     /// does not have the flag enabling vertex return.
-    #[expect(
-        unused,
-        reason = "Don't yet have vertex return builtins to return this error for."
-    )]
     NoVertexReturn(crate::Span),
     /// Trace ray calls have been found, all
     /// acceleration structures have the flag enabling
@@ -555,6 +562,7 @@ impl crate::TypeInner {
             | Self::Sampler { .. }
             | Self::AccelerationStructure { .. }
             | Self::RayQuery { .. }
+            | Self::HitObject
             | Self::BindingArray { .. } => false,
         }
     }
@@ -667,6 +675,8 @@ impl Validator {
         self.valid_expression_list.clear();
         self.valid_expression_set.clear();
         self.override_ids.clear();
+        self.trace_rays_vertex_return = TraceRayVertexReturnState::NoTraceRays;
+        self.trace_rays_payload_type = None;
     }
 
     fn validate_constant(
@@ -921,8 +931,45 @@ impl Validator {
             }
         }
 
+        // A hit's triangle's vertices are there to read only where every
+        // trace is through a structure that keeps them.
+        if let TraceRayVertexReturnState::NoVertexReturn(span) = self.trace_rays_vertex_return {
+            if let Some(ep) = module
+                .entry_points
+                .iter()
+                .find(|ep| reads_built_in(module, ep, crate::BuiltIn::HitTriangleVertexPositions))
+            {
+                return Err(Box::new(
+                    ValidationError::EntryPoint {
+                        stage: ep.stage,
+                        name: ep.name.clone(),
+                        source: EntryPointError::HitVertexPositionsWithoutVertexReturn,
+                    }
+                    .with_span_static(span, "traced through a structure without vertex return"),
+                ));
+            }
+        }
+
         Ok(mod_info)
     }
+}
+
+/// Whether `ep` takes `built_in` as an argument, or a member of one.
+fn reads_built_in(
+    module: &crate::Module,
+    ep: &crate::EntryPoint,
+    built_in: crate::BuiltIn,
+) -> bool {
+    let is = |binding: Option<&crate::Binding>| binding == Some(&crate::Binding::BuiltIn(built_in));
+    ep.function.arguments.iter().any(|argument| {
+        is(argument.binding.as_ref())
+            || match module.types[argument.ty].inner {
+                crate::TypeInner::Struct { ref members, .. } => {
+                    members.iter().any(|member| is(member.binding.as_ref()))
+                }
+                _ => false,
+            }
+    })
 }
 
 fn validate_atomic_compare_exchange_struct(

@@ -484,6 +484,13 @@ impl Parser {
                 literal_ray_flag(crate::RayFlag::SKIP_TRIANGLES)
             }
             (Token::Word("RAY_FLAG_SKIP_AABBS"), _) => literal_ray_flag(crate::RayFlag::SKIP_AABBS),
+            (Token::Word("RAY_FLAG_FORCE_OPACITY_MICROMAP_2_STATE"), span) => {
+                lexer.require_enable_extension(
+                    ImplementedEnableExtension::WgpuRayTracingOpacityMicromap,
+                    span,
+                )?;
+                literal_ray_flag(crate::RayFlag::FORCE_OPACITY_MICROMAP_2_STATE)
+            }
             (Token::Word("RAY_QUERY_INTERSECTION_NONE"), _) => {
                 literal_ray_intersection(crate::RayQueryIntersection::None)
             }
@@ -1974,6 +1981,22 @@ impl Parser {
                     stage.set(ShaderStage::Miss, name_span)?;
                     shader_stage_error_span = name_span;
                 }
+                "intersection" => {
+                    lexer.require_enable_extension(
+                        ImplementedEnableExtension::WgpuRayTracingPipeline,
+                        name_span,
+                    )?;
+                    stage.set(ShaderStage::Intersection, name_span)?;
+                    shader_stage_error_span = name_span;
+                }
+                "callable" => {
+                    lexer.require_enable_extension(
+                        ImplementedEnableExtension::WgpuRayTracingPipeline,
+                        name_span,
+                    )?;
+                    stage.set(ShaderStage::Callable, name_span)?;
+                    shader_stage_error_span = name_span;
+                }
                 "payload" => {
                     lexer.require_enable_extension(
                         ImplementedEnableExtension::WgpuMeshShader,
@@ -2161,7 +2184,10 @@ impl Parser {
                         }
 
                         match stage {
-                            ShaderStage::AnyHit | ShaderStage::ClosestHit | ShaderStage::Miss
+                            ShaderStage::AnyHit
+                            | ShaderStage::ClosestHit
+                            | ShaderStage::Miss
+                            | ShaderStage::Callable
                                 if incoming_payload.value.is_none() =>
                             {
                                 return Err(Box::new(Error::MissingIncomingPayload(

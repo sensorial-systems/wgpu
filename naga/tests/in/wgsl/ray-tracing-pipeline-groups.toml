@@ -1,7 +1,11 @@
 capabilities = "RAY_TRACING_PIPELINE"
-targets = "WGSL | SPIRV"
+targets = "WGSL | SPIRV | HLSL"
 
 [spv]
 version = [1, 4]
 capabilities = ["RayTracingKHR"]
-ray_tracing_pipeline_groups = [3, 2]
+ray_tracing_pipeline_groups = [3, 2, 0, 0]
+
+[hlsl]
+shader_model = "V6_5"
+fake_missing_bindings = true

@@ -1,0 +1,30 @@
+(
+    vertex:[
+    ],
+    fragment:[
+    ],
+    compute:[
+    ],
+    task:[
+    ],
+    mesh:[
+    ],
+    library:[
+        (
+            entry_point:"ray_gen_main",
+            target_profile:"lib_6_5",
+        ),
+        (
+            entry_point:"miss_main",
+            target_profile:"lib_6_5",
+        ),
+        (
+            entry_point:"any_hit_main",
+            target_profile:"lib_6_5",
+        ),
+        (
+            entry_point:"closest_hit_main",
+            target_profile:"lib_6_5",
+        ),
+    ],
+)

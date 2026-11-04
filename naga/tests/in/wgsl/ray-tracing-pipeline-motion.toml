@@ -1,0 +1,7 @@
+capabilities = "RAY_TRACING_PIPELINE | RAY_TRACING_MOTION_BLUR"
+targets = "WGSL | SPIRV"
+
+[spv]
+version = [1, 4]
+capabilities = ["RayTracingKHR", "RayTracingMotionBlurNV"]
+ray_tracing_pipeline_groups = [2, 1, 1, 0]

@@ -154,7 +154,10 @@ pub(in crate::back::glsl) const fn glsl_built_in(
         | Bi::ObjectToWorld
         | Bi::WorldToObject
         | Bi::HitKind
-        | Bi::HitBarycentrics => {
+        | Bi::HitBarycentrics
+        | Bi::IncomingRayFlags
+        | Bi::HitTriangleVertexPositions
+        | Bi::CurrentRayTime => {
             unimplemented!()
         }
     }
@@ -174,7 +177,12 @@ pub(in crate::back::glsl) const fn glsl_storage_qualifier(
         As::Handle => Some("uniform"),
         As::WorkGroup => Some("shared"),
         As::Immediate => Some("uniform"),
-        As::TaskPayload | As::RayPayload | As::IncomingRayPayload => unreachable!(),
+        As::TaskPayload
+        | As::RayPayload
+        | As::IncomingRayPayload
+        | As::RayHitAttribute
+        | As::CallableData
+        | As::IncomingCallableData => unreachable!(),
     }
 }
 

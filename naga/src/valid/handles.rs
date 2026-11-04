@@ -404,7 +404,8 @@ impl super::Validator {
             | crate::TypeInner::Image { .. }
             | crate::TypeInner::Sampler { .. }
             | crate::TypeInner::AccelerationStructure { .. }
-            | crate::TypeInner::RayQuery { .. } => None,
+            | crate::TypeInner::RayQuery { .. }
+            | crate::TypeInner::HitObject => None,
             crate::TypeInner::Pointer { base, space: _ } => {
                 handle.check_dep(base)?;
                 None
@@ -658,6 +659,7 @@ impl super::Validator {
             }
             crate::Expression::AtomicResult { .. }
             | crate::Expression::RayQueryProceedResult
+            | crate::Expression::ReportIntersectionResult
             | crate::Expression::SubgroupBallotResult
             | crate::Expression::SubgroupOperationResult { .. }
             | crate::Expression::WorkGroupUniformLoadResult { .. } => (),
@@ -671,8 +673,12 @@ impl super::Validator {
             | crate::Expression::RayQueryVertexPositions {
                 query,
                 committed: _,
-            } => {
+            }
+            | crate::Expression::RayQueryCandidateAabbOpaque { query } => {
                 handle.check_dep(query)?;
+            }
+            crate::Expression::HitObjectQuery { hit_object, .. } => {
+                handle.check_dep(hit_object)?;
             }
             crate::Expression::CooperativeLoad { ref data, .. } => {
                 handle.check_dep(data.pointer)?.check_dep(data.stride)?;
@@ -881,18 +887,70 @@ impl super::Validator {
                     descriptor,
                     payload,
                     groups,
+                    time,
+                    hit_object,
                 } => {
                     validate_expr(acceleration_structure)?;
                     validate_expr(descriptor)?;
                     validate_expr(payload)?;
+                    validate_expr_opt(time)?;
+                    validate_expr_opt(hit_object)?;
                     if let Some(groups) = groups {
                         validate_expr(groups.hit_group_offset)?;
                         validate_expr(groups.miss_index)?;
+                        if let Some(stride) = groups.geometry_stride {
+                            validate_expr(stride)?;
+                        }
                     }
                     Ok(())
                 }
                 crate::RayPipelineFunction::IgnoreIntersection
                 | crate::RayPipelineFunction::TerminateRay => Ok(()),
+                crate::RayPipelineFunction::ReportIntersection {
+                    hit_t,
+                    hit_kind,
+                    result,
+                } => {
+                    validate_expr(hit_t)?;
+                    validate_expr(hit_kind)?;
+                    validate_expr(result)?;
+                    Ok(())
+                }
+                crate::RayPipelineFunction::ExecuteCallable { index, data } => {
+                    validate_expr(index)?;
+                    validate_expr(data)?;
+                    Ok(())
+                }
+                crate::RayPipelineFunction::HitObjectRecordMiss {
+                    hit_object,
+                    miss_index,
+                    descriptor,
+                } => {
+                    validate_expr(hit_object)?;
+                    validate_expr(miss_index)?;
+                    validate_expr(descriptor)?;
+                    Ok(())
+                }
+                crate::RayPipelineFunction::HitObjectRecordEmpty { hit_object } => {
+                    validate_expr(hit_object)?;
+                    Ok(())
+                }
+                crate::RayPipelineFunction::HitObjectExecute {
+                    hit_object,
+                    payload,
+                } => {
+                    validate_expr(hit_object)?;
+                    validate_expr(payload)?;
+                    Ok(())
+                }
+                crate::RayPipelineFunction::ReorderThread { hit_object, hint } => {
+                    validate_expr_opt(hit_object)?;
+                    if let Some(hint) = hint {
+                        validate_expr(hint.hint)?;
+                        validate_expr(hint.bits)?;
+                    }
+                    Ok(())
+                }
             },
             crate::Statement::DebugPrintf {
                 format: _,

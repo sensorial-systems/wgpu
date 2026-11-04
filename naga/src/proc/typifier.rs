@@ -758,8 +758,31 @@ impl<'a> ResolveContext<'a> {
             crate::Expression::ArrayLength(_) => {
                 TypeResolution::Value(Ti::Scalar(crate::Scalar::U32))
             }
-            crate::Expression::RayQueryProceedResult => {
+            crate::Expression::RayQueryProceedResult
+            | crate::Expression::ReportIntersectionResult
+            | crate::Expression::RayQueryCandidateAabbOpaque { .. } => {
                 TypeResolution::Value(Ti::Scalar(crate::Scalar::BOOL))
+            }
+            crate::Expression::HitObjectQuery { query, .. } => {
+                use crate::HitObjectQuery as Q;
+                TypeResolution::Value(match query {
+                    Q::IsHit | Q::IsMiss | Q::IsEmpty => Ti::Scalar(crate::Scalar::BOOL),
+                    Q::RayTMin | Q::RayTMax => Ti::Scalar(crate::Scalar::F32),
+                    Q::InstanceIndex
+                    | Q::InstanceCustomData
+                    | Q::GeometryIndex
+                    | Q::PrimitiveIndex
+                    | Q::HitKind => Ti::Scalar(crate::Scalar::U32),
+                    Q::WorldRayOrigin | Q::WorldRayDirection => Ti::Vector {
+                        size: crate::VectorSize::Tri,
+                        scalar: crate::Scalar::F32,
+                    },
+                    Q::ObjectToWorld | Q::WorldToObject => Ti::Matrix {
+                        columns: crate::VectorSize::Quad,
+                        rows: crate::VectorSize::Tri,
+                        scalar: crate::Scalar::F32,
+                    },
+                })
             }
             crate::Expression::RayQueryGetIntersection { .. } => {
                 let result = self

@@ -54,7 +54,15 @@ pub fn ensure_block_returns(block: &mut crate::Block) {
             | S::ControlBarrier(_)
             | S::MemoryBarrier(_)
             | S::CooperativeStore { .. }
-            | S::RayPipelineFunction(crate::RayPipelineFunction::TraceRay { .. })
+            | S::RayPipelineFunction(
+                crate::RayPipelineFunction::TraceRay { .. }
+                | crate::RayPipelineFunction::ReportIntersection { .. }
+                | crate::RayPipelineFunction::ExecuteCallable { .. }
+                | crate::RayPipelineFunction::HitObjectRecordMiss { .. }
+                | crate::RayPipelineFunction::HitObjectRecordEmpty { .. }
+                | crate::RayPipelineFunction::HitObjectExecute { .. }
+                | crate::RayPipelineFunction::ReorderThread { .. },
+            )
             | S::DebugPrintf { .. }),
         )
         | None => block.push(S::Return { value: None }, Default::default()),

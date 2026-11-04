@@ -170,6 +170,8 @@ impl<'a, W: fmt::Write> super::Writer<'a, W> {
             need_bake_expressions: Default::default(),
             function_task_payload_var: Default::default(),
             immediate_raw_names: crate::FastHashMap::default(),
+            ray_structs: crate::FastHashMap::default(),
+            no_attributes: None,
         }
     }
 
@@ -192,6 +194,8 @@ impl<'a, W: fmt::Write> super::Writer<'a, W> {
         self.need_bake_expressions.clear();
         self.function_task_payload_var.clear();
         self.immediate_raw_names.clear();
+        self.ray_structs.clear();
+        self.no_attributes = None;
     }
 
     /// Generates statements to be inserted immediately before and at the very
@@ -422,6 +426,8 @@ impl<'a, W: fmt::Write> super::Writer<'a, W> {
             }
         }
 
+        self.write_ray_tracing_structs(module)?;
+
         self.write_special_functions(module)?;
 
         self.write_wrapped_expression_functions(module, &module.global_expressions, None)?;
@@ -565,6 +571,15 @@ impl<'a, W: fmt::Write> super::Writer<'a, W> {
                 && ep.early_depth_test == Some(crate::EarlyDepthTest::Force)
             {
                 writeln!(attribute_string, "[earlydepthstencil]")?;
+            }
+            if let Some(stage) = super::ray_pipeline::shader_attribute(ep.stage) {
+                if self.options.shader_model < ShaderModel::V6_3 {
+                    return Err(Error::ShaderModelTooLow(
+                        "ray tracing pipelines".to_string(),
+                        ShaderModel::V6_3,
+                    ));
+                }
+                writeln!(attribute_string, "[shader(\"{stage}\")]")?;
             }
             if let Some(ref info) = ep.mesh_info {
                 let topology_str = match info.topology {
@@ -935,7 +950,9 @@ impl<'a, W: fmt::Write> super::Writer<'a, W> {
         let func = &ep.function;
         let stage = ep.stage;
         Ok(EntryPointInterface {
+            // A ray tracing stage's arguments are intrinsics' values.
             input: if !func.arguments.is_empty()
+                && !super::ray_pipeline::is_ray_tracing_stage(stage)
                 && (stage == ShaderStage::Fragment
                     || func
                         .arguments
@@ -1188,8 +1205,16 @@ impl<'a, W: fmt::Write> super::Writer<'a, W> {
             crate::AddressSpace::Immediate => {
                 unreachable!("Immediates are handled by `write_global_immediate`")
             }
-            crate::AddressSpace::RayPayload | crate::AddressSpace::IncomingRayPayload => {
-                unimplemented!()
+            // A ray tracing stage's own, filled from and written back to
+            // its parameters; see the `ray_pipeline` module.
+            crate::AddressSpace::RayPayload
+            | crate::AddressSpace::IncomingRayPayload
+            | crate::AddressSpace::RayHitAttribute
+            | crate::AddressSpace::CallableData
+            | crate::AddressSpace::IncomingCallableData => {
+                write!(self.out, "static ")?;
+                self.write_type(module, global.ty)?;
+                ""
             }
         };
 
@@ -1789,6 +1814,13 @@ impl<'a, W: fmt::Write> super::Writer<'a, W> {
                     }
                 }
             }
+            back::FunctionType::EntryPoint(ep_index)
+                if super::ray_pipeline::is_ray_tracing_stage(
+                    module.entry_points[ep_index as usize].stage,
+                ) =>
+            {
+                self.write_ray_tracing_parameters(module, ep_index, func_ctx)?;
+            }
             back::FunctionType::EntryPoint(ep_index) => {
                 let ep = &module.entry_points[ep_index as usize];
                 if let Some(ref ep_input) =
@@ -1885,6 +1917,10 @@ impl<'a, W: fmt::Write> super::Writer<'a, W> {
 
         if let back::FunctionType::EntryPoint(index) = func_ctx.ty {
             self.write_ep_arguments_initialization(module, func, index)?;
+            if super::ray_pipeline::is_ray_tracing_stage(module.entry_points[index as usize].stage)
+            {
+                self.write_ray_tracing_prologue(module, func, index, func_ctx)?;
+            }
         }
 
         if let back::FunctionType::EntryPoint(_) = func_ctx.ty {
@@ -2313,9 +2349,11 @@ impl<'a, W: fmt::Write> super::Writer<'a, W> {
             // TODO: copy-paste from glsl-out
             Statement::Kill => writeln!(self.out, "{level}discard;")?,
             Statement::Return { value: None } => {
+                self.write_ray_tracing_payload_back(module, level, func_ctx)?;
                 writeln!(self.out, "{level}return;")?;
             }
             Statement::Return { value: Some(_) } if returns_nothing(module, func_ctx) => {
+                self.write_ray_tracing_payload_back(module, level, func_ctx)?;
                 writeln!(self.out, "{level}return;")?;
             }
             Statement::Return { value: Some(expr) } => {
@@ -3109,7 +3147,9 @@ impl<'a, W: fmt::Write> super::Writer<'a, W> {
                 writeln!(self.out, ");")?;
             }
             Statement::CooperativeStore { .. } => unimplemented!(),
-            Statement::RayPipelineFunction(_) => unreachable!(),
+            Statement::RayPipelineFunction(ref function) => {
+                self.write_ray_pipeline_function(module, function, func_ctx, level)?;
+            }
             Statement::DebugPrintf { .. } => unimplemented!(),
         }
 
@@ -4000,7 +4040,10 @@ impl<'a, W: fmt::Write> super::Writer<'a, W> {
                                 | crate::AddressSpace::Immediate
                                 | crate::AddressSpace::TaskPayload
                                 | crate::AddressSpace::RayPayload
-                                | crate::AddressSpace::IncomingRayPayload,
+                                | crate::AddressSpace::IncomingRayPayload
+                                | crate::AddressSpace::RayHitAttribute
+                                | crate::AddressSpace::CallableData
+                                | crate::AddressSpace::IncomingCallableData,
                             )
                             | None => true,
                             Some(crate::AddressSpace::Uniform) => {
@@ -4706,6 +4749,16 @@ impl<'a, W: fmt::Write> super::Writer<'a, W> {
                     write!(self.out, ", {tracker_expr_name})")?;
                 }
             }
+            Expression::RayQueryCandidateAabbOpaque { query } => {
+                write!(self.out, "(!")?;
+                self.write_expr(module, query, func_ctx)?;
+                write!(self.out, ".CandidateProceduralPrimitiveNonOpaque())")?;
+            }
+            Expression::HitObjectQuery { .. } => {
+                return Err(Error::Unimplemented(
+                    "hit objects: shader execution reordering needs shader model 6.9".into(),
+                ))
+            }
             // Not supported yet
             Expression::RayQueryVertexPositions { .. }
             | Expression::CooperativeLoad { .. }
@@ -4717,6 +4770,7 @@ impl<'a, W: fmt::Write> super::Writer<'a, W> {
             | Expression::AtomicResult { .. }
             | Expression::WorkGroupUniformLoadResult { .. }
             | Expression::RayQueryProceedResult
+            | Expression::ReportIntersectionResult
             | Expression::SubgroupBallotResult
             | Expression::SubgroupOperationResult { .. } => {}
         }

@@ -230,7 +230,13 @@ fn check_member_layout(
 const fn ptr_space_argument_flag(space: crate::AddressSpace) -> TypeFlags {
     use crate::AddressSpace as As;
     match space {
-        As::Function | As::Private | As::RayPayload | As::IncomingRayPayload => TypeFlags::ARGUMENT,
+        As::Function
+        | As::Private
+        | As::RayPayload
+        | As::IncomingRayPayload
+        | As::RayHitAttribute
+        | As::CallableData
+        | As::IncomingCallableData => TypeFlags::ARGUMENT,
         As::Uniform
         | As::Storage { .. }
         | As::Handle
@@ -933,6 +939,16 @@ impl super::Validator {
                 }
                 TypeInfo::new(
                     TypeFlags::ARGUMENT | TypeFlags::CREATION_RESOLVED,
+                    Alignment::ONE,
+                )
+            }
+            Ti::HitObject => {
+                self.require_type_capability(Capabilities::RAY_TRACING_INVOCATION_REORDER)?;
+                TypeInfo::new(
+                    TypeFlags::DATA
+                        | TypeFlags::CONSTRUCTIBLE
+                        | TypeFlags::SIZED
+                        | TypeFlags::CREATION_RESOLVED,
                     Alignment::ONE,
                 )
             }

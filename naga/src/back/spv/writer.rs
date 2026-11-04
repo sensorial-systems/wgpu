@@ -237,6 +237,23 @@ impl Writer {
     /// before more general.
     ///
     /// [`capabilities_used`]: Writer::capabilities_used
+    /// Declare `RayTracingOpacityMicromapEXT` where it is available: a ray's
+    /// flags, a value at run time, may force opacity micromaps to two states,
+    /// which needs it.
+    pub(super) fn use_opacity_micromaps_where_available(&mut self) {
+        let available = self
+            .capabilities_available
+            .as_ref()
+            .is_some_and(|available| {
+                available.contains(&spirv::Capability::RayTracingOpacityMicromapEXT)
+            });
+        if available {
+            self.capabilities_used
+                .insert(spirv::Capability::RayTracingOpacityMicromapEXT);
+            self.use_extension("SPV_EXT_opacity_micromap");
+        }
+    }
+
     pub(super) fn require_any(
         &mut self,
         what: &'static str,
@@ -516,6 +533,7 @@ impl Writer {
             crate::TypeInner::Sampler { comparison: _ } => LocalType::Sampler,
             crate::TypeInner::AccelerationStructure { .. } => LocalType::AccelerationStructure,
             crate::TypeInner::RayQuery { .. } => LocalType::RayQuery,
+            crate::TypeInner::HitObject => LocalType::HitObject,
             crate::TypeInner::Array { .. }
             | crate::TypeInner::Struct { .. }
             | crate::TypeInner::BindingArray { .. } => return None,
@@ -1658,7 +1676,7 @@ impl Writer {
                 id,
                 spirv::StorageClass::Function,
                 init_word.or_else(|| match ir_module.types[variable.ty].inner {
-                    crate::TypeInner::RayQuery { .. } => None,
+                    crate::TypeInner::RayQuery { .. } | crate::TypeInner::HitObject => None,
                     _ => {
                         let type_id = context.get_handle_type_id(variable.ty);
                         Some(context.writer.write_constant_null(type_id))
@@ -1960,6 +1978,14 @@ impl Writer {
                 self.require_any("ray tracing pipelines", &[spirv::Capability::RayTracingKHR])?;
                 spirv::ExecutionModel::MissKHR
             }
+            crate::ShaderStage::Intersection => {
+                self.require_any("ray tracing pipelines", &[spirv::Capability::RayTracingKHR])?;
+                spirv::ExecutionModel::IntersectionKHR
+            }
+            crate::ShaderStage::Callable => {
+                self.require_any("ray tracing pipelines", &[spirv::Capability::RayTracingKHR])?;
+                spirv::ExecutionModel::CallableKHR
+            }
         };
         //self.check(exec_model.required_capabilities())?;
 
@@ -2082,6 +2108,13 @@ impl Writer {
             }
             crate::TypeInner::RayQuery { .. } => {
                 self.require_any("Ray Query", &[spirv::Capability::RayQueryKHR])?;
+            }
+            crate::TypeInner::HitObject => {
+                self.use_extension("SPV_NV_shader_invocation_reorder");
+                self.require_any(
+                    "hit objects",
+                    &[spirv::Capability::ShaderInvocationReorderNV],
+                )?;
             }
             crate::TypeInner::Atomic(crate::Scalar { width: 8, kind: _ }) => {
                 self.require_any("64 bit integer atomics", &[spirv::Capability::Int64Atomics])?;
@@ -2210,6 +2243,7 @@ impl Writer {
             }
             LocalType::AccelerationStructure => Instruction::type_acceleration_structure(id),
             LocalType::RayQuery => Instruction::type_ray_query(id),
+            LocalType::HitObject => Instruction::type_hit_object(id),
         };
 
         instruction.to_words(&mut self.logical_layout.declarations);
@@ -2315,7 +2349,8 @@ impl Writer {
                 | crate::TypeInner::Image { .. }
                 | crate::TypeInner::Sampler { .. }
                 | crate::TypeInner::AccelerationStructure { .. }
-                | crate::TypeInner::RayQuery { .. } => unreachable!(),
+                | crate::TypeInner::RayQuery { .. }
+                | crate::TypeInner::HitObject => unreachable!(),
             };
 
             instruction.to_words(&mut self.logical_layout.declarations);
@@ -3258,9 +3293,9 @@ impl Writer {
                         BuiltIn::CullDistance
                     }
                     Bi::InstanceIndex => match stage {
-                        crate::ShaderStage::AnyHit | crate::ShaderStage::ClosestHit => {
-                            BuiltIn::InstanceId
-                        }
+                        crate::ShaderStage::AnyHit
+                        | crate::ShaderStage::ClosestHit
+                        | crate::ShaderStage::Intersection => BuiltIn::InstanceId,
                         _ => BuiltIn::InstanceIndex,
                     },
                     Bi::PointSize => BuiltIn::PointSize,
@@ -3285,7 +3320,9 @@ impl Writer {
                         // SPEC: https://registry.khronos.org/SPIR-V/specs/unified1/SPIRV.html#:~:text=PrimitiveId
                         let enabled_by: &[spirv::Capability] = match stage {
                             // The stage itself already requires `RayTracingKHR`.
-                            crate::ShaderStage::AnyHit | crate::ShaderStage::ClosestHit => &[],
+                            crate::ShaderStage::AnyHit
+                            | crate::ShaderStage::ClosestHit
+                            | crate::ShaderStage::Intersection => &[],
                             // The stage itself already requires `MeshShadingEXT`.
                             crate::ShaderStage::Mesh => &[],
                             // A fragment shader can be fed primitive IDs by a geometry,
@@ -3400,6 +3437,23 @@ impl Writer {
                     Bi::HitKind => BuiltIn::HitKindKHR,
                     // Read from the entry point's `HitAttributeKHR` variable instead.
                     Bi::HitBarycentrics => return Ok(BindingDecorations::None),
+                    Bi::IncomingRayFlags => BuiltIn::IncomingRayFlagsKHR,
+                    Bi::HitTriangleVertexPositions => {
+                        self.use_extension("SPV_KHR_ray_tracing_position_fetch");
+                        self.require_any(
+                            "`hit_triangle_vertex_positions` built-in",
+                            &[spirv::Capability::RayTracingPositionFetchKHR],
+                        )?;
+                        BuiltIn::HitTriangleVertexPositionsKHR
+                    }
+                    Bi::CurrentRayTime => {
+                        self.use_extension("SPV_NV_ray_tracing_motion_blur");
+                        self.require_any(
+                            "`current_ray_time` built-in",
+                            &[spirv::Capability::RayTracingMotionBlurNV],
+                        )?;
+                        BuiltIn::CurrentRayTimeNV
+                    }
                 };
 
                 use crate::ScalarKind as Sk;
@@ -3486,8 +3540,11 @@ impl Writer {
         let id = self.id_gen.next();
         let class = map_storage_class(global_variable.space);
 
-        if let crate::AddressSpace::RayPayload | crate::AddressSpace::IncomingRayPayload =
-            global_variable.space
+        if let crate::AddressSpace::RayPayload
+        | crate::AddressSpace::IncomingRayPayload
+        | crate::AddressSpace::RayHitAttribute
+        | crate::AddressSpace::CallableData
+        | crate::AddressSpace::IncomingCallableData = global_variable.space
         {
             self.require_any("ray tracing pipelines", &[spirv::Capability::RayTracingKHR])?;
         }
@@ -3795,8 +3852,7 @@ impl Writer {
                 .to_words(&mut self.logical_layout.extensions)
         }
         if has_vertex_return {
-            Instruction::extension("SPV_KHR_ray_tracing_position_fetch")
-                .to_words(&mut self.logical_layout.extensions);
+            self.use_extension("SPV_KHR_ray_tracing_position_fetch");
         }
         if ir_module.uses_mesh_shaders() {
             self.use_extension("SPV_EXT_mesh_shader");

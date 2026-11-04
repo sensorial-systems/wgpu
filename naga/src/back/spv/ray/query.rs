@@ -506,6 +506,7 @@ impl Writer {
         {
             return word;
         }
+        self.use_opacity_micromaps_where_available();
 
         let ray_query_type_id = self.get_ray_query_pointer_id();
         let acceleration_structure_type_id =

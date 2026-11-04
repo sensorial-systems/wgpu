@@ -3682,6 +3682,16 @@ impl<'source, 'temp> Lowerer<'source, 'temp> {
                         MustUse::No,
                     )
                 }
+                "rayQueryCandidateAabbOpaque" => {
+                    let mut args = ctx.prepare_args(arguments, 1, function_span);
+                    let query = self.ray_query_pointer(args.next()?, ctx)?;
+                    args.finish()?;
+
+                    (
+                        ir::Expression::RayQueryCandidateAabbOpaque { query },
+                        MustUse::No,
+                    )
+                }
                 "getCandidateHitVertexPositions" => {
                     let mut args = ctx.prepare_args(arguments, 1, function_span);
                     let query = self.ray_query_pointer(args.next()?, ctx)?;
@@ -3718,6 +3728,11 @@ impl<'source, 'temp> Lowerer<'source, 'temp> {
 
                     let fun = ir::RayQueryFunction::GenerateIntersection { hit_t };
                     let rctx = ctx.runtime_expression_ctx(function_span)?;
+                    // The distance may be an expression of its own, which
+                    // must be emitted before the statement uses it.
+                    rctx.block
+                        .extend(rctx.emitter.finish(&rctx.function.expressions));
+                    rctx.emitter.start(&rctx.function.expressions);
                     rctx.block
                         .push(ir::Statement::RayQuery { query, fun }, function_span);
                     return Ok(None);
@@ -3912,31 +3927,20 @@ impl<'source, 'temp> Lowerer<'source, 'temp> {
                         MustUse::Yes,
                     )
                 }
-                "traceRay" => {
-                    // `traceRay(structure, descriptor, &payload)`, or with
-                    // the hit group offset and miss index after the payload.
-                    let count = if arguments.len() == 5 { 5 } else { 3 };
-                    let mut args = ctx.prepare_args(arguments, count, function_span);
-                    let acceleration_structure = self.expression(args.next()?, ctx)?;
-                    let descriptor = self.expression(args.next()?, ctx)?;
-                    let payload = self.expression(args.next()?, ctx)?;
-                    let groups = if count == 5 {
-                        Some(ir::RayGroups {
-                            hit_group_offset: self.expression(args.next()?, ctx)?,
-                            miss_index: self.expression(args.next()?, ctx)?,
-                        })
-                    } else {
-                        None
-                    };
-                    args.finish()?;
-
-                    let _ = ctx.module.generate_ray_desc_type();
-                    let fun = ir::RayPipelineFunction::TraceRay {
-                        acceleration_structure,
-                        descriptor,
-                        payload,
-                        groups,
-                    };
+                "traceRay"
+                | "traceRayMotion"
+                | "hitObjectTraceRay"
+                | "hitObjectTraceRayMotion"
+                | "hitObjectRecordMiss"
+                | "hitObjectRecordEmpty"
+                | "hitObjectExecute"
+                | "reorderThread"
+                | "reorderThreadHint"
+                | "executeCallable"
+                | "ignoreIntersection"
+                | "terminateRay" => {
+                    let fun =
+                        self.ray_pipeline_function(function_name, arguments, function_span, ctx)?;
 
                     let rctx = ctx.runtime_expression_ctx(function_span)?;
                     rctx.block
@@ -3946,19 +3950,9 @@ impl<'source, 'temp> Lowerer<'source, 'temp> {
                         .push(ir::Statement::RayPipelineFunction(fun), function_span);
                     return Ok(None);
                 }
-                "ignoreIntersection" | "terminateRay" => {
-                    ctx.prepare_args(arguments, 0, function_span).finish()?;
-                    let fun = match function_name {
-                        "ignoreIntersection" => ir::RayPipelineFunction::IgnoreIntersection,
-                        _ => ir::RayPipelineFunction::TerminateRay,
-                    };
-                    let rctx = ctx.runtime_expression_ctx(function_span)?;
-                    rctx.block
-                        .extend(rctx.emitter.finish(&rctx.function.expressions));
-                    rctx.emitter.start(&rctx.function.expressions);
-                    rctx.block
-                        .push(ir::Statement::RayPipelineFunction(fun), function_span);
-                    return Ok(None);
+                "reportIntersection" => {
+                    let result = self.report_intersection(arguments, function_span, ctx)?;
+                    return Ok(Some((result, MustUse::No)));
                 }
                 "debugPrintf" => {
                     if !ctx
@@ -4015,6 +4009,10 @@ impl<'source, 'temp> Lowerer<'source, 'temp> {
 
                     return Ok(None);
                 }
+                name if ir::HitObjectQuery::from_wgsl(name).is_some() => (
+                    self.hit_object_query(name, arguments, function_span, ctx)?,
+                    MustUse::Yes,
+                ),
                 _ => return Err(Box::new(Error::UnknownIdent(function_span, function_name))),
             }
         };
@@ -5158,6 +5156,253 @@ impl<'source, 'temp> Lowerer<'source, 'temp> {
         })
     }
 
+    /// A call of `reportIntersection`: the statement, and its result.
+    fn report_intersection(
+        &mut self,
+        arguments: &[Handle<ast::Expression<'source>>],
+        function_span: Span,
+        ctx: &mut ExpressionContext<'source, '_, '_>,
+    ) -> Result<'source, Handle<ir::Expression>> {
+        let mut args = ctx.prepare_args(arguments, 2, function_span);
+        let hit_t = self.expression(args.next()?, ctx)?;
+        let hit_kind = self.expression(args.next()?, ctx)?;
+        args.finish()?;
+
+        let result =
+            ctx.interrupt_emitter(ir::Expression::ReportIntersectionResult, function_span)?;
+        let fun = ir::RayPipelineFunction::ReportIntersection {
+            hit_t,
+            hit_kind,
+            result,
+        };
+        let rctx = ctx.runtime_expression_ctx(function_span)?;
+        rctx.block
+            .push(ir::Statement::RayPipelineFunction(fun), function_span);
+        Ok(result)
+    }
+
+    /// What a call of `function_name` reads of a hit object.
+    fn hit_object_query(
+        &mut self,
+        function_name: &str,
+        arguments: &[Handle<ast::Expression<'source>>],
+        function_span: Span,
+        ctx: &mut ExpressionContext<'source, '_, '_>,
+    ) -> Result<'source, ir::Expression> {
+        ctx.enable_extensions.require(
+            crate::front::wgsl::ImplementedEnableExtension::WgpuRayTracingInvocationReorder,
+            function_span,
+        )?;
+        let query = ir::HitObjectQuery::from_wgsl(function_name).expect("a hit object query");
+        let mut args = ctx.prepare_args(arguments, 1, function_span);
+        let hit_object = self.hit_object_pointer(args.next()?, ctx)?;
+        args.finish()?;
+        Ok(ir::Expression::HitObjectQuery { hit_object, query })
+    }
+
+    /// The ray pipeline statement a call of `function_name` makes, but for a
+    /// reported intersection: kept out of [`Self::call_builtin`], whose frame
+    /// recursion multiplies.
+    fn ray_pipeline_function(
+        &mut self,
+        function_name: &str,
+        arguments: &[Handle<ast::Expression<'source>>],
+        function_span: Span,
+        ctx: &mut ExpressionContext<'source, '_, '_>,
+    ) -> Result<'source, ir::RayPipelineFunction> {
+        Ok(match function_name {
+            "executeCallable" => {
+                let mut args = ctx.prepare_args(arguments, 2, function_span);
+                let index = self.expression(args.next()?, ctx)?;
+                let data = self.expression(args.next()?, ctx)?;
+                args.finish()?;
+                ir::RayPipelineFunction::ExecuteCallable { index, data }
+            }
+            "ignoreIntersection" => {
+                ctx.prepare_args(arguments, 0, function_span).finish()?;
+                ir::RayPipelineFunction::IgnoreIntersection
+            }
+            "terminateRay" => {
+                ctx.prepare_args(arguments, 0, function_span).finish()?;
+                ir::RayPipelineFunction::TerminateRay
+            }
+            "traceRay" | "traceRayMotion" | "hitObjectTraceRay" | "hitObjectTraceRayMotion" => {
+                self.trace_ray_function(function_name, arguments, function_span, ctx)?
+            }
+            _ => {
+                ctx.enable_extensions.require(
+                    crate::front::wgsl::ImplementedEnableExtension::WgpuRayTracingInvocationReorder,
+                    function_span,
+                )?;
+                self.hit_object_function(function_name, arguments, function_span, ctx)?
+            }
+        })
+    }
+
+    /// The trace a call of `function_name` makes: `traceRay`, `traceRayMotion`,
+    /// `hitObjectTraceRay` or `hitObjectTraceRayMotion`.
+    fn trace_ray_function(
+        &mut self,
+        function_name: &str,
+        arguments: &[Handle<ast::Expression<'source>>],
+        function_span: Span,
+        ctx: &mut ExpressionContext<'source, '_, '_>,
+    ) -> Result<'source, ir::RayPipelineFunction> {
+        // `traceRay(structure, descriptor, &payload)`, or with
+        // the hit group offset, [the geometry stride,] and the
+        // miss index after the payload; `traceRayMotion` takes
+        // the ray's time after its descriptor; `hitObject`'s
+        // take the hit object first.
+        let motion = function_name.ends_with("Motion");
+        let into_object = function_name.starts_with("hitObject");
+        if motion {
+            ctx.enable_extensions.require(
+                crate::front::wgsl::ImplementedEnableExtension::WgpuRayTracingMotionBlur,
+                function_span,
+            )?;
+        }
+        if into_object {
+            ctx.enable_extensions.require(
+                crate::front::wgsl::ImplementedEnableExtension::WgpuRayTracingInvocationReorder,
+                function_span,
+            )?;
+        }
+        let first = 3 + usize::from(motion) + usize::from(into_object);
+        let count = match arguments.len() {
+            n if n == first + 2 || n == first + 3 => n,
+            _ => first,
+        };
+        let mut args = ctx.prepare_args(arguments, count as u32, function_span);
+        let hit_object = match into_object {
+            true => Some(self.hit_object_pointer(args.next()?, ctx)?),
+            false => None,
+        };
+        let acceleration_structure = self.expression(args.next()?, ctx)?;
+        let descriptor = self.expression(args.next()?, ctx)?;
+        let time = match motion {
+            true => Some(self.expression(args.next()?, ctx)?),
+            false => None,
+        };
+        let payload = self.expression(args.next()?, ctx)?;
+        let groups = if count > first {
+            let hit_group_offset = self.expression(args.next()?, ctx)?;
+            let geometry_stride = match count - first {
+                3 => Some(self.expression(args.next()?, ctx)?),
+                _ => None,
+            };
+            Some(ir::RayGroups {
+                hit_group_offset,
+                geometry_stride,
+                miss_index: self.expression(args.next()?, ctx)?,
+            })
+        } else {
+            None
+        };
+        args.finish()?;
+
+        let _ = ctx.module.generate_ray_desc_type();
+        Ok(ir::RayPipelineFunction::TraceRay {
+            acceleration_structure,
+            descriptor,
+            payload,
+            groups,
+            time,
+            hit_object,
+        })
+    }
+
+    /// The hit object statement a call of `function_name` makes: one of
+    /// `hitObjectRecordMiss`, `hitObjectRecordEmpty`, `hitObjectExecute`,
+    /// `reorderThread` and `reorderThreadHint`.
+    fn hit_object_function(
+        &mut self,
+        function_name: &str,
+        arguments: &[Handle<ast::Expression<'source>>],
+        function_span: Span,
+        ctx: &mut ExpressionContext<'source, '_, '_>,
+    ) -> Result<'source, ir::RayPipelineFunction> {
+        Ok(match function_name {
+            "hitObjectRecordMiss" => {
+                let mut args = ctx.prepare_args(arguments, 3, function_span);
+                let hit_object = self.hit_object_pointer(args.next()?, ctx)?;
+                let miss_index = self.expression(args.next()?, ctx)?;
+                let descriptor = self.expression(args.next()?, ctx)?;
+                args.finish()?;
+                let _ = ctx.module.generate_ray_desc_type();
+                ir::RayPipelineFunction::HitObjectRecordMiss {
+                    hit_object,
+                    miss_index,
+                    descriptor,
+                }
+            }
+            "hitObjectRecordEmpty" => {
+                let mut args = ctx.prepare_args(arguments, 1, function_span);
+                let hit_object = self.hit_object_pointer(args.next()?, ctx)?;
+                args.finish()?;
+                ir::RayPipelineFunction::HitObjectRecordEmpty { hit_object }
+            }
+            "hitObjectExecute" => {
+                let mut args = ctx.prepare_args(arguments, 2, function_span);
+                let hit_object = self.hit_object_pointer(args.next()?, ctx)?;
+                let payload = self.expression(args.next()?, ctx)?;
+                args.finish()?;
+                ir::RayPipelineFunction::HitObjectExecute {
+                    hit_object,
+                    payload,
+                }
+            }
+            // `reorderThread(&hit_object[, hint, bits])`
+            "reorderThread" => {
+                let count = if arguments.len() == 3 { 3 } else { 1 };
+                let mut args = ctx.prepare_args(arguments, count, function_span);
+                let hit_object = self.hit_object_pointer(args.next()?, ctx)?;
+                let hint = match count {
+                    3 => Some(ir::ReorderHint {
+                        hint: self.expression(args.next()?, ctx)?,
+                        bits: self.expression(args.next()?, ctx)?,
+                    }),
+                    _ => None,
+                };
+                args.finish()?;
+                ir::RayPipelineFunction::ReorderThread {
+                    hit_object: Some(hit_object),
+                    hint,
+                }
+            }
+            _ => {
+                let mut args = ctx.prepare_args(arguments, 2, function_span);
+                let hint = self.expression(args.next()?, ctx)?;
+                let bits = self.expression(args.next()?, ctx)?;
+                args.finish()?;
+                ir::RayPipelineFunction::ReorderThread {
+                    hit_object: None,
+                    hint: Some(ir::ReorderHint { hint, bits }),
+                }
+            }
+        })
+    }
+
+    fn hit_object_pointer(
+        &mut self,
+        expr: Handle<ast::Expression<'source>>,
+        ctx: &mut ExpressionContext<'source, '_, '_>,
+    ) -> Result<'source, Handle<ir::Expression>> {
+        let span = ctx.ast_expressions.get_span(expr);
+        let pointer = self.expression(expr, ctx)?;
+
+        match *resolve_inner!(ctx, pointer) {
+            ir::TypeInner::Pointer { base, .. }
+                if ctx.module.types[base].inner == ir::TypeInner::HitObject =>
+            {
+                Ok(pointer)
+            }
+            ref other => {
+                log::error!("Type {other:?} passed to hit object op");
+                Err(Box::new(Error::InvalidHitObjectPointer(span)))
+            }
+        }
+    }
+
     fn ray_query_pointer(
         &mut self,
         expr: Handle<ast::Expression<'source>>,
@@ -5178,6 +5423,49 @@ impl<'source, 'temp> Lowerer<'source, 'temp> {
                 log::error!("Type {other:?} passed to ray query op");
                 Err(Box::new(Error::InvalidRayQueryPointer(span)))
             }
+        }
+    }
+}
+
+impl ir::HitObjectQuery {
+    /// The query a WGSL function reads.
+    pub fn from_wgsl(word: &str) -> Option<Self> {
+        Some(match word {
+            "hitObjectIsHit" => Self::IsHit,
+            "hitObjectIsMiss" => Self::IsMiss,
+            "hitObjectIsEmpty" => Self::IsEmpty,
+            "hitObjectRayTMin" => Self::RayTMin,
+            "hitObjectRayTMax" => Self::RayTMax,
+            "hitObjectInstanceIndex" => Self::InstanceIndex,
+            "hitObjectInstanceCustomData" => Self::InstanceCustomData,
+            "hitObjectGeometryIndex" => Self::GeometryIndex,
+            "hitObjectPrimitiveIndex" => Self::PrimitiveIndex,
+            "hitObjectHitKind" => Self::HitKind,
+            "hitObjectWorldRayOrigin" => Self::WorldRayOrigin,
+            "hitObjectWorldRayDirection" => Self::WorldRayDirection,
+            "hitObjectObjectToWorld" => Self::ObjectToWorld,
+            "hitObjectWorldToObject" => Self::WorldToObject,
+            _ => return None,
+        })
+    }
+
+    /// The WGSL function that reads the query.
+    pub const fn to_wgsl(self) -> &'static str {
+        match self {
+            Self::IsHit => "hitObjectIsHit",
+            Self::IsMiss => "hitObjectIsMiss",
+            Self::IsEmpty => "hitObjectIsEmpty",
+            Self::RayTMin => "hitObjectRayTMin",
+            Self::RayTMax => "hitObjectRayTMax",
+            Self::InstanceIndex => "hitObjectInstanceIndex",
+            Self::InstanceCustomData => "hitObjectInstanceCustomData",
+            Self::GeometryIndex => "hitObjectGeometryIndex",
+            Self::PrimitiveIndex => "hitObjectPrimitiveIndex",
+            Self::HitKind => "hitObjectHitKind",
+            Self::WorldRayOrigin => "hitObjectWorldRayOrigin",
+            Self::WorldRayDirection => "hitObjectWorldRayDirection",
+            Self::ObjectToWorld => "hitObjectObjectToWorld",
+            Self::WorldToObject => "hitObjectWorldToObject",
         }
     }
 }

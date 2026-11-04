@@ -210,6 +210,8 @@ fn spirv_cross_stage_name(stage: naga::ShaderStage) -> &'static str {
         naga::ShaderStage::Miss => "rmiss",
         naga::ShaderStage::AnyHit => "rahit",
         naga::ShaderStage::ClosestHit => "rchit",
+        naga::ShaderStage::Intersection => "rint",
+        naga::ShaderStage::Callable => "rcall",
     }
 }
 
@@ -507,7 +509,9 @@ fn write_output_hlsl(
             naga::ShaderStage::RayGeneration
             | naga::ShaderStage::AnyHit
             | naga::ShaderStage::ClosestHit
-            | naga::ShaderStage::Miss => unreachable!(),
+            | naga::ShaderStage::Miss
+            | naga::ShaderStage::Intersection
+            | naga::ShaderStage::Callable => &mut config.library,
         }
         .push(hlsl_snapshots::ConfigItem {
             entry_point: name.clone(),

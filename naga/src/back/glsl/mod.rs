@@ -137,7 +137,11 @@ impl crate::AddressSpace {
             | crate::AddressSpace::Immediate
             | crate::AddressSpace::TaskPayload => false,
 
-            crate::AddressSpace::RayPayload | crate::AddressSpace::IncomingRayPayload => {
+            crate::AddressSpace::RayPayload
+            | crate::AddressSpace::IncomingRayPayload
+            | crate::AddressSpace::RayHitAttribute
+            | crate::AddressSpace::CallableData
+            | crate::AddressSpace::IncomingCallableData => {
                 unreachable!()
             }
         }
@@ -378,7 +382,9 @@ impl fmt::Display for VaryingName<'_> {
                         | ShaderStage::RayGeneration
                         | ShaderStage::AnyHit
                         | ShaderStage::ClosestHit
-                        | ShaderStage::Miss,
+                        | ShaderStage::Miss
+                        | ShaderStage::Intersection
+                        | ShaderStage::Callable,
                         _,
                     ) => unreachable!(),
                 };
@@ -401,7 +407,9 @@ const fn shader_stage_to_str(st: ShaderStage) -> &'static str {
         | ShaderStage::RayGeneration
         | ShaderStage::AnyHit
         | ShaderStage::ClosestHit
-        | ShaderStage::Miss => unreachable!(),
+        | ShaderStage::Miss
+        | ShaderStage::Intersection
+        | ShaderStage::Callable => unreachable!(),
     }
 }
 

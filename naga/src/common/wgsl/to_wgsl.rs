@@ -209,6 +209,9 @@ impl TryToWgsl for crate::BuiltIn {
             Bi::WorldToObject => "world_to_object",
             Bi::HitKind => "hit_kind",
             Bi::HitBarycentrics => "hit_barycentrics",
+            Bi::IncomingRayFlags => "incoming_ray_flags",
+            Bi::HitTriangleVertexPositions => "hit_triangle_vertex_positions",
+            Bi::CurrentRayTime => "current_ray_time",
 
             Bi::BaseInstance
             | Bi::BaseVertex
@@ -393,6 +396,9 @@ pub const fn address_space_str(
             As::TaskPayload => "task_payload",
             As::IncomingRayPayload => "incoming_ray_payload",
             As::RayPayload => "ray_payload",
+            As::RayHitAttribute => "ray_hit_attribute",
+            As::CallableData => "callable_data",
+            As::IncomingCallableData => "incoming_callable_data",
         }),
         None,
     )

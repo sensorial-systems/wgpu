@@ -30,6 +30,8 @@ pub enum ExpressionError {
     InvalidArrayType(Handle<crate::Expression>),
     #[error("Get intersection of {0:?} can't be done")]
     InvalidRayQueryType(Handle<crate::Expression>),
+    #[error("{0:?} is not a pointer to a local hit object")]
+    InvalidHitObject(Handle<crate::Expression>),
     #[error("Splatting {0:?} can't be done")]
     InvalidSplatType(Handle<crate::Expression>),
     #[error("Swizzling {0:?} can't be done")]
@@ -1372,6 +1374,7 @@ impl super::Validator {
                 }
             },
             E::RayQueryProceedResult => ShaderStages::all(),
+            E::ReportIntersectionResult => ShaderStages::INTERSECTION,
             E::RayQueryGetIntersection {
                 query,
                 committed: _,
@@ -1388,6 +1391,31 @@ impl super::Validator {
                 },
                 ref other => {
                     log::debug!("Intersection result of {other:?}");
+                    return Err(ExpressionError::InvalidRayQueryType(query));
+                }
+            },
+            E::HitObjectQuery { hit_object, .. } => match resolver[hit_object] {
+                Ti::Pointer {
+                    base,
+                    space: crate::AddressSpace::Function,
+                } if resolver.types[base].inner == Ti::HitObject => {
+                    ShaderStages::RAY_GENERATION | ShaderStages::CLOSEST_HIT | ShaderStages::MISS
+                }
+                _ => return Err(ExpressionError::InvalidHitObject(hit_object)),
+            },
+            E::RayQueryCandidateAabbOpaque { query } => match resolver[query] {
+                Ti::Pointer {
+                    base,
+                    space: crate::AddressSpace::Function,
+                } => match resolver.types[base].inner {
+                    Ti::RayQuery { .. } => ShaderStages::all(),
+                    ref other => {
+                        log::debug!("Candidate opacity of a pointer to {other:?}");
+                        return Err(ExpressionError::InvalidRayQueryType(query));
+                    }
+                },
+                ref other => {
+                    log::debug!("Candidate opacity of {other:?}");
                     return Err(ExpressionError::InvalidRayQueryType(query));
                 }
             },

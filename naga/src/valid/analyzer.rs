@@ -653,7 +653,13 @@ impl FunctionInfo {
                 let var = &resolve_context.global_vars[gh];
                 let uniform = match var.space {
                     // local data is non-uniform
-                    As::Function | As::Private | As::RayPayload | As::IncomingRayPayload => false,
+                    As::Function
+                    | As::Private
+                    | As::RayPayload
+                    | As::IncomingRayPayload
+                    | As::RayHitAttribute
+                    | As::CallableData
+                    | As::IncomingCallableData => false,
                     // workgroup memory is exclusively accessed by the group
                     // task payload memory is very similar to workgroup memory
                     As::WorkGroup | As::TaskPayload => true,
@@ -809,10 +815,12 @@ impl FunctionInfo {
                 requirements: UniformityRequirements::empty(),
             },
             E::CallResult(function) => other_functions[function.index()].uniformity.clone(),
-            E::AtomicResult { .. } | E::RayQueryProceedResult => Uniformity {
-                non_uniform_result: Some(handle),
-                requirements: UniformityRequirements::empty(),
-            },
+            E::AtomicResult { .. } | E::RayQueryProceedResult | E::ReportIntersectionResult => {
+                Uniformity {
+                    non_uniform_result: Some(handle),
+                    requirements: UniformityRequirements::empty(),
+                }
+            }
             E::WorkGroupUniformLoadResult { .. } => Uniformity {
                 // The result of WorkGroupUniformLoad is always uniform by definition
                 non_uniform_result: None,
@@ -839,10 +847,15 @@ impl FunctionInfo {
                 non_uniform_result: Some(handle),
                 requirements: UniformityRequirements::empty(),
             },
+            E::HitObjectQuery { hit_object, .. } => Uniformity {
+                non_uniform_result: self.add_ref(hit_object),
+                requirements: UniformityRequirements::empty(),
+            },
             E::RayQueryVertexPositions {
                 query,
                 committed: _,
-            } => Uniformity {
+            }
+            | E::RayQueryCandidateAabbOpaque { query } => Uniformity {
                 non_uniform_result: self.add_ref(query),
                 requirements: UniformityRequirements::empty(),
             },
@@ -1200,13 +1213,70 @@ impl FunctionInfo {
                         descriptor,
                         payload,
                         groups,
+                        time,
+                        hit_object,
                     } => {
                         let _ = self.add_ref(acceleration_structure);
                         let _ = self.add_ref(descriptor);
                         let _ = self.add_ref(payload);
+                        if let Some(time) = time {
+                            let _ = self.add_ref(time);
+                        }
+                        if let Some(hit_object) = hit_object {
+                            let _ = self.add_ref(hit_object);
+                        }
                         if let Some(groups) = groups {
                             let _ = self.add_ref(groups.hit_group_offset);
                             let _ = self.add_ref(groups.miss_index);
+                            if let Some(stride) = groups.geometry_stride {
+                                let _ = self.add_ref(stride);
+                            }
+                        }
+                        FunctionUniformity::new()
+                    }
+                    crate::RayPipelineFunction::ReportIntersection {
+                        hit_t,
+                        hit_kind,
+                        result: _,
+                    } => {
+                        let _ = self.add_ref(hit_t);
+                        let _ = self.add_ref(hit_kind);
+                        FunctionUniformity::new()
+                    }
+                    crate::RayPipelineFunction::ExecuteCallable { index, data } => {
+                        let _ = self.add_ref(index);
+                        let _ = self.add_ref(data);
+                        FunctionUniformity::new()
+                    }
+                    crate::RayPipelineFunction::HitObjectRecordMiss {
+                        hit_object,
+                        miss_index,
+                        descriptor,
+                    } => {
+                        let _ = self.add_ref(hit_object);
+                        let _ = self.add_ref(miss_index);
+                        let _ = self.add_ref(descriptor);
+                        FunctionUniformity::new()
+                    }
+                    crate::RayPipelineFunction::HitObjectRecordEmpty { hit_object } => {
+                        let _ = self.add_ref(hit_object);
+                        FunctionUniformity::new()
+                    }
+                    crate::RayPipelineFunction::HitObjectExecute {
+                        hit_object,
+                        payload,
+                    } => {
+                        let _ = self.add_ref(hit_object);
+                        let _ = self.add_ref(payload);
+                        FunctionUniformity::new()
+                    }
+                    crate::RayPipelineFunction::ReorderThread { hit_object, hint } => {
+                        if let Some(hit_object) = hit_object {
+                            let _ = self.add_ref(hit_object);
+                        }
+                        if let Some(hint) = hint {
+                            let _ = self.add_ref(hint.hint);
+                            let _ = self.add_ref(hint.bits);
                         }
                         FunctionUniformity::new()
                     }

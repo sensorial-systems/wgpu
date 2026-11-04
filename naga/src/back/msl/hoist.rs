@@ -230,7 +230,8 @@ pub(super) const fn is_statement_result(expression: &crate::Expression) -> bool 
         | Ex::WorkGroupUniformLoadResult { .. }
         | Ex::SubgroupBallotResult
         | Ex::SubgroupOperationResult { .. }
-        | Ex::RayQueryProceedResult => true,
+        | Ex::RayQueryProceedResult
+        | Ex::ReportIntersectionResult => true,
 
         Ex::Literal(_)
         | Ex::Constant(_)
@@ -258,6 +259,8 @@ pub(super) const fn is_statement_result(expression: &crate::Expression) -> bool 
         | Ex::Bitcast { .. }
         | Ex::ArrayLength(_)
         | Ex::RayQueryVertexPositions { .. }
+        | Ex::RayQueryCandidateAabbOpaque { .. }
+        | Ex::HitObjectQuery { .. }
         | Ex::RayQueryGetIntersection { .. }
         | Ex::CooperativeLoad { .. }
         | Ex::CooperativeMultiplyAdd { .. } => false,

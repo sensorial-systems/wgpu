@@ -267,7 +267,9 @@ impl Namer {
                         | crate::ShaderStage::RayGeneration
                         | crate::ShaderStage::ClosestHit
                         | crate::ShaderStage::AnyHit
-                        | crate::ShaderStage::Miss => unreachable!(),
+                        | crate::ShaderStage::Miss
+                        | crate::ShaderStage::Intersection
+                        | crate::ShaderStage::Callable => unreachable!(),
                     };
                     entrypoint_type_fallbacks.insert(result.ty, label);
                 }

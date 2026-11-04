@@ -81,7 +81,8 @@ impl ExpressionTracer<'_> {
             | Ex::FunctionArgument(_)
             | Ex::LocalVariable(_)
             | Ex::SubgroupBallotResult
-            | Ex::RayQueryProceedResult => {}
+            | Ex::RayQueryProceedResult
+            | Ex::ReportIntersectionResult => {}
 
             // Expressions can refer to constants and overrides, which can refer
             // in turn to expressions, which complicates our nice one-pass
@@ -190,8 +191,12 @@ impl ExpressionTracer<'_> {
             Ex::RayQueryVertexPositions {
                 query,
                 committed: _,
-            } => {
+            }
+            | Ex::RayQueryCandidateAabbOpaque { query } => {
                 self.expressions_used.insert(query);
+            }
+            Ex::HitObjectQuery { hit_object, .. } => {
+                self.expressions_used.insert(hit_object);
             }
             Ex::Unary { op: _, expr } => {
                 self.expressions_used.insert(expr);
@@ -287,7 +292,8 @@ impl ModuleMap {
             | Ex::FunctionArgument(_)
             | Ex::LocalVariable(_)
             | Ex::SubgroupBallotResult
-            | Ex::RayQueryProceedResult => {}
+            | Ex::RayQueryProceedResult
+            | Ex::ReportIntersectionResult => {}
 
             // Expressions that contain handles that need to be adjusted.
             Ex::Constant(ref mut constant) => self.constants.adjust(constant),
@@ -434,6 +440,10 @@ impl ModuleMap {
                 ref mut query,
                 committed: _,
             } => adjust(query),
+            Ex::RayQueryCandidateAabbOpaque { ref mut query } => adjust(query),
+            Ex::HitObjectQuery {
+                ref mut hit_object, ..
+            } => adjust(hit_object),
             Ex::CooperativeLoad { ref mut data, .. } => {
                 adjust(&mut data.pointer);
                 adjust(&mut data.stride);

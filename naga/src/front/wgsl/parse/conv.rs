@@ -44,6 +44,18 @@ pub fn map_address_space<'a>(
                 }))
             }
         }
+        "ray_hit_attribute" => {
+            enable_extensions.require(ImplementedEnableExtension::WgpuRayTracingPipeline, span)?;
+            Ok(crate::AddressSpace::RayHitAttribute)
+        }
+        "callable_data" => {
+            enable_extensions.require(ImplementedEnableExtension::WgpuRayTracingPipeline, span)?;
+            Ok(crate::AddressSpace::CallableData)
+        }
+        "incoming_callable_data" => {
+            enable_extensions.require(ImplementedEnableExtension::WgpuRayTracingPipeline, span)?;
+            Ok(crate::AddressSpace::IncomingCallableData)
+        }
         _ => Err(Box::new(Error::UnknownAddressSpace(span))),
     }
 }
@@ -146,6 +158,9 @@ pub fn map_built_in(
         "world_to_object" => crate::BuiltIn::WorldToObject,
         "hit_kind" => crate::BuiltIn::HitKind,
         "hit_barycentrics" => crate::BuiltIn::HitBarycentrics,
+        "incoming_ray_flags" => crate::BuiltIn::IncomingRayFlags,
+        "hit_triangle_vertex_positions" => crate::BuiltIn::HitTriangleVertexPositions,
+        "current_ray_time" => crate::BuiltIn::CurrentRayTime,
         _ => return Err(Box::new(Error::UnknownBuiltin(span))),
     };
     match built_in {
@@ -157,6 +172,12 @@ pub fn map_built_in(
         }
         crate::BuiltIn::DrawIndex => {
             enable_extensions.require(ImplementedEnableExtension::DrawIndex, span)?
+        }
+        crate::BuiltIn::HitTriangleVertexPositions => {
+            enable_extensions.require(ImplementedEnableExtension::WgpuRayQueryVertexReturn, span)?
+        }
+        crate::BuiltIn::CurrentRayTime => {
+            enable_extensions.require(ImplementedEnableExtension::WgpuRayTracingMotionBlur, span)?
         }
         crate::BuiltIn::CullPrimitive
         | crate::BuiltIn::PointIndex
@@ -516,6 +537,8 @@ pub fn map_predeclared_type(
         "RayDesc" => PredeclaredType::RayDesc,
         // ray intersection
         "RayIntersection" => PredeclaredType::RayIntersection,
+        // hit object
+        "hit_object" => Ti::HitObject.into(),
 
         // predeclared type generators
 
@@ -588,6 +611,9 @@ pub fn map_predeclared_type(
         ]),
         PredeclaredType::TypeGenerator(TypeGenerator::CooperativeMatrix { .. }) => {
             Some(&[ImplementedEnableExtension::WgpuCooperativeMatrix])
+        }
+        PredeclaredType::TypeInner(Ti::HitObject) => {
+            Some(&[ImplementedEnableExtension::WgpuRayTracingInvocationReorder])
         }
         PredeclaredType::TypeGenerator(TypeGenerator::BindingArray) => {
             Some(&[ImplementedEnableExtension::WgpuBindingArray])

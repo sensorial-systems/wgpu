@@ -712,7 +712,10 @@ impl ResolvedBinding {
                     | Bi::ObjectToWorld
                     | Bi::WorldToObject
                     | Bi::HitKind
-                    | Bi::HitBarycentrics => unreachable!(),
+                    | Bi::HitBarycentrics
+                    | Bi::IncomingRayFlags
+                    | Bi::HitTriangleVertexPositions
+                    | Bi::CurrentRayTime => unreachable!(),
                 };
                 write!(out, "{name}")?;
             }

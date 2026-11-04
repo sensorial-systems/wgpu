@@ -91,6 +91,29 @@ bitflags::bitflags! {
 /// The value may represent any of WGSL's concrete scalar types.
 pub type PipelineConstants = hashbrown::HashMap<String, f64>;
 
+/// How many hit groups, miss and callable stages a ray tracing pipeline
+/// has, which a backend keeps a trace's and a callable's choices within.
+///
+/// A trace's hit group offset and geometry stride are read by the hardware
+/// to their low 4 bits, and its miss index to its low 16: those are taken
+/// first, then the offset clamped below the number of hit groups, the stride
+/// to the greatest, and the miss index to the last miss stage. An
+/// `executeCallable`'s index is clamped to the last callable stage, and
+/// without any it does nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serialize", derive(serde::Serialize))]
+#[cfg_attr(feature = "deserialize", derive(serde::Deserialize))]
+pub struct RayTracingPipelineGroups {
+    /// The number of hit groups.
+    pub hit_groups: u32,
+    /// The number of miss stages.
+    pub misses: u32,
+    /// The greatest geometry stride a trace may give.
+    pub max_geometry_stride: u32,
+    /// The number of callable stages.
+    pub callables: u32,
+}
+
 /// Indentation level.
 #[derive(Clone, Copy, Debug)]
 pub struct Level(pub usize);

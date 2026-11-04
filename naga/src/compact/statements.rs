@@ -187,17 +187,69 @@ impl FunctionTracer<'_> {
                             descriptor,
                             payload,
                             groups,
+                            time,
+                            hit_object,
                         } => {
                             self.expressions_used.insert(acceleration_structure);
                             self.expressions_used.insert(descriptor);
                             self.expressions_used.insert(payload);
+                            if let Some(time) = time {
+                                self.expressions_used.insert(time);
+                            }
+                            if let Some(hit_object) = hit_object {
+                                self.expressions_used.insert(hit_object);
+                            }
                             if let Some(groups) = groups {
                                 self.expressions_used.insert(groups.hit_group_offset);
                                 self.expressions_used.insert(groups.miss_index);
+                                if let Some(stride) = groups.geometry_stride {
+                                    self.expressions_used.insert(stride);
+                                }
                             }
                         }
                         crate::RayPipelineFunction::IgnoreIntersection
                         | crate::RayPipelineFunction::TerminateRay => {}
+                        crate::RayPipelineFunction::ReportIntersection {
+                            hit_t,
+                            hit_kind,
+                            result,
+                        } => {
+                            self.expressions_used.insert(hit_t);
+                            self.expressions_used.insert(hit_kind);
+                            self.expressions_used.insert(result);
+                        }
+                        crate::RayPipelineFunction::ExecuteCallable { index, data } => {
+                            self.expressions_used.insert(index);
+                            self.expressions_used.insert(data);
+                        }
+                        crate::RayPipelineFunction::HitObjectRecordMiss {
+                            hit_object,
+                            miss_index,
+                            descriptor,
+                        } => {
+                            self.expressions_used.insert(hit_object);
+                            self.expressions_used.insert(miss_index);
+                            self.expressions_used.insert(descriptor);
+                        }
+                        crate::RayPipelineFunction::HitObjectRecordEmpty { hit_object } => {
+                            self.expressions_used.insert(hit_object);
+                        }
+                        crate::RayPipelineFunction::HitObjectExecute {
+                            hit_object,
+                            payload,
+                        } => {
+                            self.expressions_used.insert(hit_object);
+                            self.expressions_used.insert(payload);
+                        }
+                        crate::RayPipelineFunction::ReorderThread { hit_object, hint } => {
+                            if let Some(hit_object) = hit_object {
+                                self.expressions_used.insert(hit_object);
+                            }
+                            if let Some(hint) = hint {
+                                self.expressions_used.insert(hint.hint);
+                                self.expressions_used.insert(hint.bits);
+                            }
+                        }
                     },
                     St::DebugPrintf {
                         format: _,
@@ -441,17 +493,75 @@ impl FunctionMap {
                             ref mut descriptor,
                             ref mut payload,
                             ref mut groups,
+                            ref mut time,
+                            ref mut hit_object,
                         } => {
                             adjust(acceleration_structure);
                             adjust(descriptor);
                             adjust(payload);
-                            if let Some(groups) = groups {
+                            if let Some(ref mut time) = *time {
+                                adjust(time);
+                            }
+                            if let Some(ref mut hit_object) = *hit_object {
+                                adjust(hit_object);
+                            }
+                            if let Some(ref mut groups) = *groups {
                                 adjust(&mut groups.hit_group_offset);
                                 adjust(&mut groups.miss_index);
+                                if let Some(ref mut stride) = groups.geometry_stride {
+                                    adjust(stride);
+                                }
                             }
                         }
                         crate::RayPipelineFunction::IgnoreIntersection
                         | crate::RayPipelineFunction::TerminateRay => {}
+                        crate::RayPipelineFunction::ReportIntersection {
+                            ref mut hit_t,
+                            ref mut hit_kind,
+                            ref mut result,
+                        } => {
+                            adjust(hit_t);
+                            adjust(hit_kind);
+                            adjust(result);
+                        }
+                        crate::RayPipelineFunction::ExecuteCallable {
+                            ref mut index,
+                            ref mut data,
+                        } => {
+                            adjust(index);
+                            adjust(data);
+                        }
+                        crate::RayPipelineFunction::HitObjectRecordMiss {
+                            ref mut hit_object,
+                            ref mut miss_index,
+                            ref mut descriptor,
+                        } => {
+                            adjust(hit_object);
+                            adjust(miss_index);
+                            adjust(descriptor);
+                        }
+                        crate::RayPipelineFunction::HitObjectRecordEmpty { ref mut hit_object } => {
+                            adjust(hit_object);
+                        }
+                        crate::RayPipelineFunction::HitObjectExecute {
+                            ref mut hit_object,
+                            ref mut payload,
+                        } => {
+                            adjust(hit_object);
+                            adjust(payload);
+                        }
+                        crate::RayPipelineFunction::ReorderThread {
+                            ref mut hit_object,
+                            ref mut hint,
+                        } => {
+                            if let Some(ref mut hit_object) = *hit_object {
+                                adjust(hit_object);
+                            }
+                            if let Some(ref mut hint) = *hint {
+                                adjust(&mut hint.hint);
+                                adjust(&mut hint.bits);
+                            }
+                        }
                     },
                     St::DebugPrintf {
                         format: _,

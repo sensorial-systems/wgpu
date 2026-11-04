@@ -220,7 +220,10 @@ impl crate::BuiltIn {
             | Self::ObjectToWorld
             | Self::WorldToObject
             | Self::HitKind
-            | Self::HitBarycentrics => unreachable!(),
+            | Self::HitBarycentrics
+            | Self::IncomingRayFlags
+            | Self::HitTriangleVertexPositions
+            | Self::CurrentRayTime => unreachable!(),
         }))
     }
 }

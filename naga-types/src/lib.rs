@@ -42,6 +42,14 @@ pub enum ShaderStage {
 
     /// A closest hit shader, in a ray tracing pipeline.
     ClosestHit,
+
+    /// An intersection shader, in a ray tracing pipeline: it tests a ray
+    /// against a procedural primitive's box and reports the hits it finds.
+    Intersection,
+
+    /// A callable shader, in a ray tracing pipeline: run by `executeCallable`
+    /// from another of the pipeline's stages.
+    Callable,
 }
 
 impl ShaderStage {
@@ -49,7 +57,12 @@ impl ShaderStage {
         match self {
             Self::Vertex | Self::Fragment => false,
             Self::Compute | Self::Task | Self::Mesh => true,
-            Self::RayGeneration | Self::AnyHit | Self::ClosestHit | Self::Miss => false,
+            Self::RayGeneration
+            | Self::AnyHit
+            | Self::ClosestHit
+            | Self::Miss
+            | Self::Intersection
+            | Self::Callable => false,
         }
     }
 
