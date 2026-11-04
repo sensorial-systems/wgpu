@@ -1,0 +1,191 @@
+; SPIR-V
+; Version: 1.4
+; Generator: rspirv
+; Bound: 128
+OpCapability Shader
+OpCapability RayTracingKHR
+OpCapability ShaderInvocationReorderNV
+OpCapability RayTracingSpheresGeometryNV
+OpCapability RayTracingLinearSweptSpheresGeometryNV
+OpExtension "SPV_KHR_ray_tracing"
+OpExtension "SPV_NV_shader_invocation_reorder"
+OpExtension "SPV_NV_linear_swept_spheres"
+%1 = OpExtInstImport "GLSL.std.450"
+OpMemoryModel Logical GLSL450
+OpEntryPoint RayGenerationKHR %25 "ray_gen_main" %22 %15 %17
+OpEntryPoint ClosestHitKHR %107 "closest_hit_main" %87 %90 %92 %95 %98 %101 %104 %19
+OpEntryPoint MissKHR %125 "miss_main" %19
+OpMemberDecorate %9 0 Offset 0
+OpMemberDecorate %9 1 Offset 4
+OpMemberDecorate %9 2 Offset 8
+OpMemberDecorate %9 3 Offset 12
+OpMemberDecorate %9 4 Offset 16
+OpMemberDecorate %9 5 Offset 32
+OpDecorate %12 ArrayStride 16
+OpDecorate %14 ArrayStride 4
+OpDecorate %17 DescriptorSet 0
+OpDecorate %17 Binding 0
+OpDecorate %22 BuiltIn LaunchIdKHR
+OpDecorate %87 BuiltIn HitIsSphereNV
+OpDecorate %90 BuiltIn HitIsLSSNV
+OpDecorate %92 BuiltIn HitSpherePositionNV
+OpDecorate %95 BuiltIn HitSphereRadiusNV
+OpDecorate %98 BuiltIn HitLSSPositionsNV
+OpDecorate %101 BuiltIn HitLSSRadiiNV
+%2 = OpTypeVoid
+%3 = OpTypeFloat 32
+%4 = OpTypeVector %3 4
+%5 = OpTypeAccelerationStructureKHR
+%6 = OpTypeInt 32 0
+%7 = OpTypeVector %6 3
+%8 = OpTypeVector %3 3
+%9 = OpTypeStruct %6 %6 %3 %3 %8 %8
+%10 = OpTypeHitObjectNV
+%11 = OpTypeBool
+%13 = OpConstant  %6  2
+%12 = OpTypeArray %8 %13
+%14 = OpTypeArray %3 %13
+%16 = OpTypePointer RayPayloadKHR %4
+%15 = OpVariable  %16  RayPayloadKHR
+%18 = OpTypePointer UniformConstant %5
+%17 = OpVariable  %18  UniformConstant
+%20 = OpTypePointer IncomingRayPayloadKHR %4
+%19 = OpVariable  %20  IncomingRayPayloadKHR
+%23 = OpTypePointer Input %7
+%22 = OpVariable  %23  Input
+%26 = OpTypeFunction %2
+%28 = OpConstant  %6  0
+%29 = OpConstant  %6  255
+%30 = OpConstant  %3  0.01
+%31 = OpConstant  %3  100
+%32 = OpConstant  %3  0
+%33 = OpConstantComposite  %8  %32 %32 %32
+%34 = OpConstant  %3  1
+%35 = OpConstantComposite  %8  %32 %34 %32
+%36 = OpConstantComposite  %9  %28 %29 %30 %31 %33 %35
+%38 = OpTypePointer Function %10
+%40 = OpConstant  %6  15
+%43 = OpConstant  %6  1
+%46 = OpConstant  %6  65535
+%49 = OpTypeVector %11 3
+%67 = OpTypeMatrix %8 2
+%69 = OpTypeArray %8 %13
+%73 = OpTypeVector %3 2
+%75 = OpTypeArray %3 %13
+%88 = OpTypePointer Input %11
+%87 = OpVariable  %88  Input
+%90 = OpVariable  %88  Input
+%93 = OpTypePointer Input %8
+%92 = OpVariable  %93  Input
+%96 = OpTypePointer Input %3
+%95 = OpVariable  %96  Input
+%99 = OpTypePointer Input %12
+%98 = OpVariable  %99  Input
+%102 = OpTypePointer Input %14
+%101 = OpVariable  %102  Input
+%105 = OpTypePointer HitAttributeKHR %3
+%104 = OpVariable  %105  HitAttributeKHR
+%126 = OpConstantComposite  %4  %32 %32 %32 %32
+%25 = OpFunction  %2  None %26
+%21 = OpLabel
+%37 = OpVariable  %38  Function
+%24 = OpLoad  %7  %22
+%27 = OpLoad  %5  %17
+OpBranch %39
+%39 = OpLabel
+%41 = OpBitwiseAnd  %6  %28 %40
+%42 = OpExtInst  %6  %1 UMin %41 %28
+%44 = OpBitwiseAnd  %6  %28 %40
+%45 = OpExtInst  %6  %1 UMin %44 %43
+%47 = OpBitwiseAnd  %6  %28 %46
+%48 = OpExtInst  %6  %1 UMin %47 %28
+%50 = OpCompositeExtract  %6  %36 0
+%51 = OpCompositeExtract  %6  %36 1
+%52 = OpCompositeExtract  %3  %36 2
+%53 = OpCompositeExtract  %3  %36 3
+%54 = OpCompositeExtract  %8  %36 4
+%55 = OpCompositeExtract  %8  %36 5
+OpHitObjectTraceRayNV %37 %27 %50 %51 %42 %45 %48 %54 %52 %55 %53 %15
+%56 = OpHitObjectIsSphereHitNV  %11  %37
+OpSelectionMerge %57 None
+OpBranchConditional %56 %58 %59
+%58 = OpLabel
+%60 = OpHitObjectGetSpherePositionNV  %8  %37
+%61 = OpHitObjectGetSphereRadiusNV  %3  %37
+%62 = OpCompositeConstruct  %4  %60 %61
+OpStore %15 %62
+OpReturn
+%59 = OpLabel
+%63 = OpHitObjectIsLSSHitNV  %11  %37
+OpSelectionMerge %64 None
+OpBranchConditional %63 %65 %66
+%65 = OpLabel
+%70 = OpHitObjectGetLSSPositionsNV  %69  %37
+%71 = OpCompositeExtract  %8  %70 0
+%72 = OpCompositeExtract  %8  %70 1
+%68 = OpCompositeConstruct  %67  %71 %72
+%76 = OpHitObjectGetLSSRadiiNV  %75  %37
+%77 = OpCompositeExtract  %3  %76 0
+%78 = OpCompositeExtract  %3  %76 1
+%74 = OpCompositeConstruct  %73  %77 %78
+%79 = OpCompositeExtract  %8  %68 0
+%80 = OpCompositeExtract  %8  %68 1
+%81 = OpFAdd  %8  %79 %80
+%82 = OpCompositeExtract  %3  %74 0
+%83 = OpCompositeExtract  %3  %74 1
+%84 = OpFAdd  %3  %82 %83
+%85 = OpCompositeConstruct  %4  %81 %84
+OpStore %15 %85
+OpReturn
+%66 = OpLabel
+OpReturn
+%64 = OpLabel
+OpBranch %57
+%57 = OpLabel
+OpReturn
+OpFunctionEnd
+%107 = OpFunction  %2  None %26
+%86 = OpLabel
+%89 = OpLoad  %11  %87
+%91 = OpLoad  %11  %90
+%94 = OpLoad  %8  %92
+%97 = OpLoad  %3  %95
+%100 = OpLoad  %12  %98
+%103 = OpLoad  %14  %101
+%106 = OpLoad  %3  %104
+OpBranch %108
+%108 = OpLabel
+OpSelectionMerge %109 None
+OpBranchConditional %89 %110 %111
+%110 = OpLabel
+%112 = OpCompositeConstruct  %4  %94 %97
+OpStore %19 %112
+OpReturn
+%111 = OpLabel
+OpSelectionMerge %113 None
+OpBranchConditional %91 %114 %115
+%114 = OpLabel
+%116 = OpCompositeExtract  %8  %100 0
+%117 = OpCompositeExtract  %8  %100 1
+%119 = OpCompositeConstruct  %8  %106 %106 %106
+%118 = OpExtInst  %8  %1 FMix %116 %117 %119
+%120 = OpCompositeExtract  %3  %103 0
+%121 = OpCompositeExtract  %3  %103 1
+%122 = OpExtInst  %3  %1 FMix %120 %121 %106
+%123 = OpCompositeConstruct  %4  %118 %122
+OpStore %19 %123
+OpReturn
+%115 = OpLabel
+OpReturn
+%113 = OpLabel
+OpBranch %109
+%109 = OpLabel
+OpReturn
+OpFunctionEnd
+%125 = OpFunction  %2  None %26
+%124 = OpLabel
+OpBranch %127
+%127 = OpLabel
+OpStore %19 %126
+OpReturn
+OpFunctionEnd

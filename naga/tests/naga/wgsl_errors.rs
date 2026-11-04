@@ -6564,3 +6564,55 @@ fn ray_query_let() {
         "Ray query with initialize",
     );
 }
+
+/// A swept sphere's hit value and a triangle's barycentrics are the same hit
+/// attribute: one stage reads one of them; and sphere built-ins need their
+/// extension.
+#[test]
+fn sphere_hit_value_is_the_hit_attribute() {
+    let source = r#"
+        enable wgpu_ray_tracing_pipeline;
+        enable wgpu_ray_tracing_linear_swept_spheres;
+        var<incoming_ray_payload> incoming: f32;
+        @ray_generation fn generate() {}
+        @closest_hit @incoming_payload(incoming)
+        fn hit(@builtin(hit_barycentrics) b: vec2<f32>, @builtin(hit_lss_value) u: f32) {
+            incoming = b.x + u;
+        }
+    "#;
+    let module = naga::front::wgsl::parse_str(source).expect("source ought to parse");
+    let err = naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        Capabilities::RAY_TRACING_PIPELINE | Capabilities::RAY_TRACING_LINEAR_SWEPT_SPHERES,
+    )
+    .validate(&module)
+    .expect_err("source ought to fail validation");
+    assert!(
+        matches!(
+            err.into_inner(),
+            naga::valid::ValidationError::EntryPoint {
+                source: valid::EntryPointError::BarycentricsAndLssValue,
+                ..
+            }
+        ),
+        "the stage reads both"
+    );
+
+    check(
+        r#"
+        enable wgpu_ray_tracing_pipeline;
+        var<incoming_ray_payload> incoming: f32;
+        @closest_hit @incoming_payload(incoming)
+        fn hit(@builtin(hit_is_sphere) s: bool) {}
+        "#,
+        r#"error: the `wgpu_ray_tracing_linear_swept_spheres` enable extension is not enabled
+  ┌─ wgsl:5:25
+  │
+5 │         fn hit(@builtin(hit_is_sphere) s: bool) {}
+  │                         ^^^^^^^^^^^^^ the `wgpu_ray_tracing_linear_swept_spheres` "Enable Extension" is needed for this functionality, but it is not currently enabled.
+  │
+  = note: You can enable this extension by adding `enable wgpu_ray_tracing_linear_swept_spheres;` at the top of the shader, before any other items.
+
+"#,
+    );
+}

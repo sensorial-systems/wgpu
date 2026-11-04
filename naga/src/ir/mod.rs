@@ -516,7 +516,9 @@ pub enum BuiltIn {
     WorldToObject,
     /// Read in closest hit and any hit shaders, the type of hit as provided by
     /// the intersection function if any, otherwise this is 254 (0xFE) for a
-    /// front facing triangle and 255 (0xFF) for a back facing triangle
+    /// front facing triangle and 255 (0xFF) for a back facing triangle; on
+    /// NVIDIA's hardware, 206 (0xCE) for a sphere and 204 (0xCC) for a linear
+    /// swept sphere
     HitKind,
     /// Read in closest hit and any hit shaders, the second and third barycentric
     /// coordinates of the hit point on the triangle. The first can be computed as
@@ -533,6 +535,29 @@ pub enum BuiltIn {
     /// the trace that called the stage was given, between 0 and 1: see
     /// [`RayPipelineFunction::TraceRay::time`].
     CurrentRayTime,
+    /// Read in closest hit and any hit shaders, a `bool`: whether the hit is
+    /// with a sphere.
+    HitIsSphere,
+    /// Read in closest hit and any hit shaders, a `bool`: whether the hit is
+    /// with a linear swept sphere.
+    HitIsLss,
+    /// Read in closest hit and any hit shaders, a `vec3<f32>`: the hit
+    /// sphere's center, in object space.
+    HitSpherePosition,
+    /// Read in closest hit and any hit shaders, an `f32`: the hit sphere's
+    /// radius.
+    HitSphereRadius,
+    /// Read in closest hit and any hit shaders, an `array<vec3<f32>, 2>`: the
+    /// hit linear swept sphere's two ends, in object space.
+    HitLssPositions,
+    /// Read in closest hit and any hit shaders, an `array<f32, 2>`: the hit
+    /// linear swept sphere's radii at its two ends.
+    HitLssRadii,
+    /// Read in closest hit and any hit shaders, an `f32`: where along a
+    /// linear swept sphere the hit is, from 0 at its first end to 1 at its
+    /// second, and 0 for a sphere. Like [`BuiltIn::HitBarycentrics`], it is
+    /// the hit attribute of a hit group without an intersection stage.
+    HitLssValue,
 }
 
 /// Number of bytes per scalar.
@@ -3025,6 +3050,34 @@ pub enum HitObjectQuery {
     ObjectToWorld,
     /// A `mat4x3<f32>`: the hit instance's world-to-object transform.
     WorldToObject,
+    /// A `bool`: whether it holds a hit with a sphere.
+    IsSphereHit,
+    /// A `bool`: whether it holds a hit with a linear swept sphere.
+    IsLssHit,
+    /// A `vec3<f32>`: the hit sphere's center, in object space.
+    SpherePosition,
+    /// An `f32`: the hit sphere's radius.
+    SphereRadius,
+    /// A `mat2x3<f32>`: the hit linear swept sphere's two ends, in object
+    /// space, as its columns.
+    LssPositions,
+    /// A `vec2<f32>`: the hit linear swept sphere's radii at its two ends.
+    LssRadii,
+}
+
+impl HitObjectQuery {
+    /// Whether the query reads a sphere or linear swept sphere.
+    pub const fn of_spheres(self) -> bool {
+        matches!(
+            self,
+            Self::IsSphereHit
+                | Self::IsLssHit
+                | Self::SpherePosition
+                | Self::SphereRadius
+                | Self::LssPositions
+                | Self::LssRadii
+        )
+    }
 }
 
 /// The hit group and miss stage a [`RayPipelineFunction::TraceRay`] calls.

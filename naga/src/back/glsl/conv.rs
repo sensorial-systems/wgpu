@@ -157,7 +157,14 @@ pub(in crate::back::glsl) const fn glsl_built_in(
         | Bi::HitBarycentrics
         | Bi::IncomingRayFlags
         | Bi::HitTriangleVertexPositions
-        | Bi::CurrentRayTime => {
+        | Bi::CurrentRayTime
+        | Bi::HitIsSphere
+        | Bi::HitIsLss
+        | Bi::HitSpherePosition
+        | Bi::HitSphereRadius
+        | Bi::HitLssPositions
+        | Bi::HitLssRadii
+        | Bi::HitLssValue => {
             unimplemented!()
         }
     }

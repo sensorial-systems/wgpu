@@ -212,6 +212,13 @@ impl TryToWgsl for crate::BuiltIn {
             Bi::IncomingRayFlags => "incoming_ray_flags",
             Bi::HitTriangleVertexPositions => "hit_triangle_vertex_positions",
             Bi::CurrentRayTime => "current_ray_time",
+            Bi::HitIsSphere => "hit_is_sphere",
+            Bi::HitIsLss => "hit_is_lss",
+            Bi::HitSpherePosition => "hit_sphere_position",
+            Bi::HitSphereRadius => "hit_sphere_radius",
+            Bi::HitLssPositions => "hit_lss_positions",
+            Bi::HitLssRadii => "hit_lss_radii",
+            Bi::HitLssValue => "hit_lss_value",
 
             Bi::BaseInstance
             | Bi::BaseVertex

@@ -302,6 +302,7 @@ impl<W: Write> Writer<W> {
             ray_tracing_pipeline: bool,
             ray_tracing_motion_blur: bool,
             invocation_reorder: bool,
+            linear_swept_spheres: bool,
             vertex_return: bool,
             per_vertex: bool,
             binding_array: bool,
@@ -364,6 +365,18 @@ impl<W: Write> Writer<W> {
             crate::Binding::BuiltIn(crate::BuiltIn::CurrentRayTime) => {
                 needed.ray_tracing_pipeline = true;
                 needed.ray_tracing_motion_blur = true;
+            }
+            crate::Binding::BuiltIn(
+                crate::BuiltIn::HitIsSphere
+                | crate::BuiltIn::HitIsLss
+                | crate::BuiltIn::HitSpherePosition
+                | crate::BuiltIn::HitSphereRadius
+                | crate::BuiltIn::HitLssPositions
+                | crate::BuiltIn::HitLssRadii
+                | crate::BuiltIn::HitLssValue,
+            ) => {
+                needed.ray_tracing_pipeline = true;
+                needed.linear_swept_spheres = true;
             }
             _ => {}
         };
@@ -469,6 +482,19 @@ impl<W: Write> Writer<W> {
             .types
             .iter()
             .any(|(_, ty)| ty.inner == TypeInner::HitObject);
+        needed.linear_swept_spheres |= module
+            .functions
+            .iter()
+            .map(|(_, function)| function)
+            .chain(module.entry_points.iter().map(|ep| &ep.function))
+            .any(|function| {
+                function.expressions.iter().any(|(_, expression)| {
+                    matches!(
+                        *expression,
+                        crate::Expression::HitObjectQuery { query, .. } if query.of_spheres()
+                    )
+                })
+            });
 
         // Write required declarations
         let mut any_written = false;
@@ -518,6 +544,10 @@ impl<W: Write> Writer<W> {
         }
         if needed.invocation_reorder {
             writeln!(self.out, "enable wgpu_ray_tracing_invocation_reorder;")?;
+            any_written = true;
+        }
+        if needed.linear_swept_spheres {
+            writeln!(self.out, "enable wgpu_ray_tracing_linear_swept_spheres;")?;
             any_written = true;
         }
         if needed.vertex_return {

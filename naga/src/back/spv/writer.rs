@@ -3054,10 +3054,11 @@ impl Writer {
         // storage class rather than just `Input` and `Output`.
         //
         // SPEC: https://registry.khronos.org/SPIR-V/specs/unified1/SPIRV.html#OpEntryPoint
+        // A linear swept sphere's hit value is the same attribute, a float.
         let class = match *binding {
-            crate::Binding::BuiltIn(crate::BuiltIn::HitBarycentrics) => {
-                spirv::StorageClass::HitAttributeKHR
-            }
+            crate::Binding::BuiltIn(
+                crate::BuiltIn::HitBarycentrics | crate::BuiltIn::HitLssValue,
+            ) => spirv::StorageClass::HitAttributeKHR,
             _ => class,
         };
 
@@ -3454,6 +3455,32 @@ impl Writer {
                         )?;
                         BuiltIn::CurrentRayTimeNV
                     }
+                    Bi::HitIsSphere | Bi::HitSpherePosition | Bi::HitSphereRadius => {
+                        self.use_extension("SPV_NV_linear_swept_spheres");
+                        self.require_any(
+                            "sphere hit built-ins",
+                            &[spirv::Capability::RayTracingSpheresGeometryNV],
+                        )?;
+                        match built_in {
+                            Bi::HitIsSphere => BuiltIn::HitIsSphereNV,
+                            Bi::HitSpherePosition => BuiltIn::HitSpherePositionNV,
+                            _ => BuiltIn::HitSphereRadiusNV,
+                        }
+                    }
+                    Bi::HitIsLss | Bi::HitLssPositions | Bi::HitLssRadii => {
+                        self.use_extension("SPV_NV_linear_swept_spheres");
+                        self.require_any(
+                            "linear swept sphere hit built-ins",
+                            &[spirv::Capability::RayTracingLinearSweptSpheresGeometryNV],
+                        )?;
+                        match built_in {
+                            Bi::HitIsLss => BuiltIn::HitIsLSSNV,
+                            Bi::HitLssPositions => BuiltIn::HitLSSPositionsNV,
+                            _ => BuiltIn::HitLSSRadiiNV,
+                        }
+                    }
+                    // Read from the entry point's `HitAttributeKHR` variable instead.
+                    Bi::HitLssValue => return Ok(BindingDecorations::None),
                 };
 
                 use crate::ScalarKind as Sk;

@@ -195,8 +195,10 @@ pub enum EntryPointError {
     RayHitAttributeInInvalidStage(crate::ShaderStage),
     #[error("An entry point accesses more than one global variable in the `ray_hit_attribute` address space")]
     MoreThanOneRayHitAttribute,
-    #[error("A hit stage reads both `hit_barycentrics` and a `ray_hit_attribute` variable, which is the same attribute")]
+    #[error("A hit stage reads `hit_barycentrics` or `hit_lss_value` and a `ray_hit_attribute` variable, which are the same attribute")]
     RayHitAttributeAndBarycentrics,
+    #[error("A hit stage reads both `hit_barycentrics` and `hit_lss_value`, which are the same attribute")]
+    BarycentricsAndLssValue,
     #[error("Only the `ray_generation`, `closest_hit`, `miss` and `callable` shader stages can access a global variable in the `callable_data` address space")]
     CallableDataInInvalidStage(crate::ShaderStage),
     #[error("Only a `callable` stage can access a global variable in the `incoming_callable_data` address space, and only its own")]
@@ -298,6 +300,13 @@ impl VaryingContext<'_> {
                     Bi::DrawIndex => Capabilities::DRAW_INDEX,
                     Bi::HitTriangleVertexPositions => Capabilities::RAY_HIT_VERTEX_POSITION,
                     Bi::CurrentRayTime => Capabilities::RAY_TRACING_MOTION_BLUR,
+                    Bi::HitIsSphere
+                    | Bi::HitIsLss
+                    | Bi::HitSpherePosition
+                    | Bi::HitSphereRadius
+                    | Bi::HitLssPositions
+                    | Bi::HitLssRadii
+                    | Bi::HitLssValue => Capabilities::RAY_TRACING_LINEAR_SWEPT_SPHERES,
                     _ => Capabilities::empty(),
                 };
                 if !self.capabilities.contains(required) {
@@ -745,6 +754,44 @@ impl VaryingContext<'_> {
                                         == Ti::Vector {
                                             size: Vs::Tri,
                                             scalar: crate::Scalar::F32,
+                                        }
+                            }
+                            _ => false,
+                        },
+                    ),
+                    Bi::HitIsSphere | Bi::HitIsLss => (
+                        matches!(self.stage, St::AnyHit | St::ClosestHit) && !self.output,
+                        *ty_inner == Ti::Scalar(crate::Scalar::BOOL),
+                    ),
+                    Bi::HitSphereRadius | Bi::HitLssValue => (
+                        matches!(self.stage, St::AnyHit | St::ClosestHit) && !self.output,
+                        *ty_inner == Ti::Scalar(crate::Scalar::F32),
+                    ),
+                    Bi::HitSpherePosition => (
+                        matches!(self.stage, St::AnyHit | St::ClosestHit) && !self.output,
+                        *ty_inner
+                            == Ti::Vector {
+                                size: Vs::Tri,
+                                scalar: crate::Scalar::F32,
+                            },
+                    ),
+                    Bi::HitLssPositions | Bi::HitLssRadii => (
+                        matches!(self.stage, St::AnyHit | St::ClosestHit) && !self.output,
+                        match *ty_inner {
+                            Ti::Array {
+                                base,
+                                size: crate::ArraySize::Constant(size),
+                                ..
+                            } => {
+                                size.get() == 2
+                                    && self.types[base].inner
+                                        == if built_in == Bi::HitLssPositions {
+                                            Ti::Vector {
+                                                size: Vs::Tri,
+                                                scalar: crate::Scalar::F32,
+                                            }
+                                        } else {
+                                            Ti::Scalar(crate::Scalar::F32)
                                         }
                             }
                             _ => false,
@@ -1649,6 +1696,12 @@ impl super::Validator {
             }
         }
 
+        if super::reads_built_in(module, ep, crate::BuiltIn::HitBarycentrics)
+            && super::reads_built_in(module, ep, crate::BuiltIn::HitLssValue)
+        {
+            return Err(EntryPointError::BarycentricsAndLssValue.with_span());
+        }
+
         self.ep_resource_bindings.clear();
         let mut hit_attribute = None;
         for (var_handle, var) in module.global_variables.iter() {
@@ -1662,19 +1715,9 @@ impl super::Validator {
                     return Err(EntryPointError::MoreThanOneRayHitAttribute
                         .with_span_handle(var_handle, &module.global_variables));
                 }
-                let reads_barycentrics = ep.function.arguments.iter().any(|argument| {
-                    let built_in = |binding: Option<&crate::Binding>| {
-                        binding == Some(&crate::Binding::BuiltIn(crate::BuiltIn::HitBarycentrics))
-                    };
-                    built_in(argument.binding.as_ref())
-                        || match module.types[argument.ty].inner {
-                            crate::TypeInner::Struct { ref members, .. } => members
-                                .iter()
-                                .any(|member| built_in(member.binding.as_ref())),
-                            _ => false,
-                        }
-                });
-                if reads_barycentrics {
+                if super::reads_built_in(module, ep, crate::BuiltIn::HitBarycentrics)
+                    || super::reads_built_in(module, ep, crate::BuiltIn::HitLssValue)
+                {
                     return Err(EntryPointError::RayHitAttributeAndBarycentrics
                         .with_span_handle(var_handle, &module.global_variables));
                 }

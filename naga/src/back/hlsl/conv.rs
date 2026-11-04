@@ -223,7 +223,14 @@ impl crate::BuiltIn {
             | Self::HitBarycentrics
             | Self::IncomingRayFlags
             | Self::HitTriangleVertexPositions
-            | Self::CurrentRayTime => unreachable!(),
+            | Self::CurrentRayTime
+            | Self::HitIsSphere
+            | Self::HitIsLss
+            | Self::HitSpherePosition
+            | Self::HitSphereRadius
+            | Self::HitLssPositions
+            | Self::HitLssRadii
+            | Self::HitLssValue => unreachable!(),
         }))
     }
 }

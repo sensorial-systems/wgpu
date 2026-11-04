@@ -1,0 +1,7 @@
+capabilities = "RAY_TRACING_PIPELINE | RAY_TRACING_INVOCATION_REORDER | RAY_TRACING_LINEAR_SWEPT_SPHERES"
+targets = "WGSL | SPIRV"
+
+[spv]
+version = [1, 4]
+capabilities = ["RayTracingKHR", "ShaderInvocationReorderNV", "RayTracingSpheresGeometryNV", "RayTracingLinearSweptSpheresGeometryNV"]
+ray_tracing_pipeline_groups = [1, 1, 1, 0]

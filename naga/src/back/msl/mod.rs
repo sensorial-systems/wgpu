@@ -715,7 +715,14 @@ impl ResolvedBinding {
                     | Bi::HitBarycentrics
                     | Bi::IncomingRayFlags
                     | Bi::HitTriangleVertexPositions
-                    | Bi::CurrentRayTime => unreachable!(),
+                    | Bi::CurrentRayTime
+                    | Bi::HitIsSphere
+                    | Bi::HitIsLss
+                    | Bi::HitSpherePosition
+                    | Bi::HitSphereRadius
+                    | Bi::HitLssPositions
+                    | Bi::HitLssRadii
+                    | Bi::HitLssValue => unreachable!(),
                 };
                 write!(out, "{name}")?;
             }

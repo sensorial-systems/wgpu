@@ -1394,15 +1394,23 @@ impl super::Validator {
                     return Err(ExpressionError::InvalidRayQueryType(query));
                 }
             },
-            E::HitObjectQuery { hit_object, .. } => match resolver[hit_object] {
-                Ti::Pointer {
-                    base,
-                    space: crate::AddressSpace::Function,
-                } if resolver.types[base].inner == Ti::HitObject => {
-                    ShaderStages::RAY_GENERATION | ShaderStages::CLOSEST_HIT | ShaderStages::MISS
+            E::HitObjectQuery { hit_object, query } => {
+                let caps = crate::valid::Capabilities::RAY_TRACING_LINEAR_SWEPT_SPHERES;
+                if query.of_spheres() && !self.capabilities.contains(caps) {
+                    return Err(ExpressionError::MissingCapabilities(caps));
                 }
-                _ => return Err(ExpressionError::InvalidHitObject(hit_object)),
-            },
+                match resolver[hit_object] {
+                    Ti::Pointer {
+                        base,
+                        space: crate::AddressSpace::Function,
+                    } if resolver.types[base].inner == Ti::HitObject => {
+                        ShaderStages::RAY_GENERATION
+                            | ShaderStages::CLOSEST_HIT
+                            | ShaderStages::MISS
+                    }
+                    _ => return Err(ExpressionError::InvalidHitObject(hit_object)),
+                }
+            }
             E::RayQueryCandidateAabbOpaque { query } => match resolver[query] {
                 Ti::Pointer {
                     base,

@@ -17,6 +17,7 @@ pub(crate) struct EnableExtensions {
     wgpu_ray_tracing_motion_blur: bool,
     wgpu_ray_tracing_invocation_reorder: bool,
     wgpu_ray_tracing_opacity_micromap: bool,
+    wgpu_ray_tracing_linear_swept_spheres: bool,
     dual_source_blending: bool,
     /// Whether `enable f16;` was written earlier in the shader module.
     f16: bool,
@@ -41,6 +42,7 @@ impl EnableExtensions {
             wgpu_ray_tracing_motion_blur: false,
             wgpu_ray_tracing_invocation_reorder: false,
             wgpu_ray_tracing_opacity_micromap: false,
+            wgpu_ray_tracing_linear_swept_spheres: false,
             f16: false,
             wgpu_int16: false,
             dual_source_blending: false,
@@ -74,6 +76,9 @@ impl EnableExtensions {
             ImplementedEnableExtension::WgpuRayTracingOpacityMicromap => {
                 &mut self.wgpu_ray_tracing_opacity_micromap
             }
+            ImplementedEnableExtension::WgpuRayTracingLinearSweptSpheres => {
+                &mut self.wgpu_ray_tracing_linear_swept_spheres
+            }
             ImplementedEnableExtension::DualSourceBlending => &mut self.dual_source_blending,
             ImplementedEnableExtension::F16 => &mut self.f16,
             ImplementedEnableExtension::WgpuInt16 => &mut self.wgpu_int16,
@@ -105,6 +110,9 @@ impl EnableExtensions {
             }
             ImplementedEnableExtension::WgpuRayTracingOpacityMicromap => {
                 self.wgpu_ray_tracing_opacity_micromap
+            }
+            ImplementedEnableExtension::WgpuRayTracingLinearSweptSpheres => {
+                self.wgpu_ray_tracing_linear_swept_spheres
             }
             ImplementedEnableExtension::DualSourceBlending => self.dual_source_blending,
             ImplementedEnableExtension::F16 => self.f16,
@@ -167,6 +175,7 @@ impl EnableExtension {
     const RAY_TRACING_MOTION_BLUR: &'static str = "wgpu_ray_tracing_motion_blur";
     const RAY_TRACING_INVOCATION_REORDER: &'static str = "wgpu_ray_tracing_invocation_reorder";
     const RAY_TRACING_OPACITY_MICROMAP: &'static str = "wgpu_ray_tracing_opacity_micromap";
+    const RAY_TRACING_LINEAR_SWEPT_SPHERES: &'static str = "wgpu_ray_tracing_linear_swept_spheres";
     const COOPERATIVE_MATRIX: &'static str = "wgpu_cooperative_matrix";
     const SUBGROUPS: &'static str = "subgroups";
     const PRIMITIVE_INDEX: &'static str = "primitive_index";
@@ -200,6 +209,9 @@ impl EnableExtension {
             }
             Self::RAY_TRACING_OPACITY_MICROMAP => {
                 Self::Implemented(ImplementedEnableExtension::WgpuRayTracingOpacityMicromap)
+            }
+            Self::RAY_TRACING_LINEAR_SWEPT_SPHERES => {
+                Self::Implemented(ImplementedEnableExtension::WgpuRayTracingLinearSweptSpheres)
             }
             Self::COOPERATIVE_MATRIX => {
                 Self::Implemented(ImplementedEnableExtension::WgpuCooperativeMatrix)
@@ -239,6 +251,9 @@ impl EnableExtension {
                 }
                 ImplementedEnableExtension::WgpuRayTracingOpacityMicromap => {
                     Self::RAY_TRACING_OPACITY_MICROMAP
+                }
+                ImplementedEnableExtension::WgpuRayTracingLinearSweptSpheres => {
+                    Self::RAY_TRACING_LINEAR_SWEPT_SPHERES
                 }
                 ImplementedEnableExtension::WgpuPerVertex => Self::PER_VERTEX,
                 ImplementedEnableExtension::WgpuBindingArray => Self::BINDING_ARRAY,
@@ -291,6 +306,10 @@ pub enum ImplementedEnableExtension {
     /// Enables the `wgpu_ray_tracing_opacity_micromap` extension, native
     /// only: `RAY_FLAG_FORCE_OPACITY_MICROMAP_2_STATE`.
     WgpuRayTracingOpacityMicromap,
+    /// Enables the `wgpu_ray_tracing_linear_swept_spheres` extension, native
+    /// only: the built-ins of sphere and linear swept sphere hits, and their
+    /// hit object queries.
+    WgpuRayTracingLinearSweptSpheres,
     /// Enables the `wgpu_cooperative_matrix` extension, native only.
     WgpuCooperativeMatrix,
     /// Enables the `draw_index` builtin. Not currently part of the WGSL spec but probably will be at some point.
@@ -324,6 +343,7 @@ impl ImplementedEnableExtension {
         Self::WgpuRayTracingMotionBlur,
         Self::WgpuRayTracingInvocationReorder,
         Self::WgpuRayTracingOpacityMicromap,
+        Self::WgpuRayTracingLinearSweptSpheres,
         Self::WgpuCooperativeMatrix,
         Self::DrawIndex,
         Self::PrimitiveIndex,
@@ -353,6 +373,7 @@ impl ImplementedEnableExtension {
             Self::WgpuRayTracingMotionBlur => C::RAY_TRACING_MOTION_BLUR,
             Self::WgpuRayTracingInvocationReorder => C::RAY_TRACING_INVOCATION_REORDER,
             Self::WgpuRayTracingOpacityMicromap => C::RAY_TRACING_OPACITY_MICROMAP,
+            Self::WgpuRayTracingLinearSweptSpheres => C::RAY_TRACING_LINEAR_SWEPT_SPHERES,
             Self::DrawIndex => C::DRAW_INDEX,
             Self::PrimitiveIndex => C::PRIMITIVE_INDEX,
             Self::WgpuPerVertex => C::PER_VERTEX,

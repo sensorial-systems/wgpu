@@ -232,6 +232,9 @@ bitflags::bitflags! {
         const RAY_TRACING_INVOCATION_REORDER = 1 << 47;
         /// Support for rays that force opacity micromaps to two states.
         const RAY_TRACING_OPACITY_MICROMAP = 1 << 48;
+        /// Support for spheres and linear swept spheres in ray tracing
+        /// pipelines: their hit built-ins and hit object queries.
+        const RAY_TRACING_LINEAR_SWEPT_SPHERES = 1 << 49;
     }
 }
 
@@ -257,6 +260,7 @@ impl Capabilities {
             Self::RAY_TRACING_MOTION_BLUR => Some(Ext::WgpuRayTracingMotionBlur),
             Self::RAY_TRACING_INVOCATION_REORDER => Some(Ext::WgpuRayTracingInvocationReorder),
             Self::RAY_TRACING_OPACITY_MICROMAP => Some(Ext::WgpuRayTracingOpacityMicromap),
+            Self::RAY_TRACING_LINEAR_SWEPT_SPHERES => Some(Ext::WgpuRayTracingLinearSweptSpheres),
             Self::PER_VERTEX => Some(Ext::WgpuPerVertex),
             Self::BUFFER_BINDING_ARRAY
             | Self::BUFFER_BINDING_ARRAY_NON_UNIFORM_INDEXING

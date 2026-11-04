@@ -5194,6 +5194,12 @@ impl<'source, 'temp> Lowerer<'source, 'temp> {
             function_span,
         )?;
         let query = ir::HitObjectQuery::from_wgsl(function_name).expect("a hit object query");
+        if query.of_spheres() {
+            ctx.enable_extensions.require(
+                crate::front::wgsl::ImplementedEnableExtension::WgpuRayTracingLinearSweptSpheres,
+                function_span,
+            )?;
+        }
         let mut args = ctx.prepare_args(arguments, 1, function_span);
         let hit_object = self.hit_object_pointer(args.next()?, ctx)?;
         args.finish()?;
@@ -5445,6 +5451,12 @@ impl ir::HitObjectQuery {
             "hitObjectWorldRayDirection" => Self::WorldRayDirection,
             "hitObjectObjectToWorld" => Self::ObjectToWorld,
             "hitObjectWorldToObject" => Self::WorldToObject,
+            "hitObjectIsSphereHit" => Self::IsSphereHit,
+            "hitObjectIsLssHit" => Self::IsLssHit,
+            "hitObjectSpherePosition" => Self::SpherePosition,
+            "hitObjectSphereRadius" => Self::SphereRadius,
+            "hitObjectLssPositions" => Self::LssPositions,
+            "hitObjectLssRadii" => Self::LssRadii,
             _ => return None,
         })
     }
@@ -5466,6 +5478,12 @@ impl ir::HitObjectQuery {
             Self::WorldRayDirection => "hitObjectWorldRayDirection",
             Self::ObjectToWorld => "hitObjectObjectToWorld",
             Self::WorldToObject => "hitObjectWorldToObject",
+            Self::IsSphereHit => "hitObjectIsSphereHit",
+            Self::IsLssHit => "hitObjectIsLssHit",
+            Self::SpherePosition => "hitObjectSpherePosition",
+            Self::SphereRadius => "hitObjectSphereRadius",
+            Self::LssPositions => "hitObjectLssPositions",
+            Self::LssRadii => "hitObjectLssRadii",
         }
     }
 }

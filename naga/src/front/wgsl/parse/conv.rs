@@ -161,6 +161,13 @@ pub fn map_built_in(
         "incoming_ray_flags" => crate::BuiltIn::IncomingRayFlags,
         "hit_triangle_vertex_positions" => crate::BuiltIn::HitTriangleVertexPositions,
         "current_ray_time" => crate::BuiltIn::CurrentRayTime,
+        "hit_is_sphere" => crate::BuiltIn::HitIsSphere,
+        "hit_is_lss" => crate::BuiltIn::HitIsLss,
+        "hit_sphere_position" => crate::BuiltIn::HitSpherePosition,
+        "hit_sphere_radius" => crate::BuiltIn::HitSphereRadius,
+        "hit_lss_positions" => crate::BuiltIn::HitLssPositions,
+        "hit_lss_radii" => crate::BuiltIn::HitLssRadii,
+        "hit_lss_value" => crate::BuiltIn::HitLssValue,
         _ => return Err(Box::new(Error::UnknownBuiltin(span))),
     };
     match built_in {
@@ -179,6 +186,16 @@ pub fn map_built_in(
         crate::BuiltIn::CurrentRayTime => {
             enable_extensions.require(ImplementedEnableExtension::WgpuRayTracingMotionBlur, span)?
         }
+        crate::BuiltIn::HitIsSphere
+        | crate::BuiltIn::HitIsLss
+        | crate::BuiltIn::HitSpherePosition
+        | crate::BuiltIn::HitSphereRadius
+        | crate::BuiltIn::HitLssPositions
+        | crate::BuiltIn::HitLssRadii
+        | crate::BuiltIn::HitLssValue => enable_extensions.require(
+            ImplementedEnableExtension::WgpuRayTracingLinearSweptSpheres,
+            span,
+        )?,
         crate::BuiltIn::CullPrimitive
         | crate::BuiltIn::PointIndex
         | crate::BuiltIn::LineIndices

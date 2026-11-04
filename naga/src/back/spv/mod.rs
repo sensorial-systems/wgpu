@@ -1237,6 +1237,7 @@ pub fn supported_capabilities() -> crate::valid::Capabilities {
         | Caps::RAY_TRACING_MOTION_BLUR
         | Caps::RAY_TRACING_INVOCATION_REORDER
         | Caps::RAY_TRACING_OPACITY_MICROMAP
+        | Caps::RAY_TRACING_LINEAR_SWEPT_SPHERES
         | Caps::SHADER_FLOAT16
         | Caps::SHADER_INT16
         // No TEXTURE_EXTERNAL

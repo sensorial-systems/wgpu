@@ -2216,6 +2216,17 @@ impl BlockContext<'_> {
             }
             crate::Expression::HitObjectQuery { hit_object, query } => {
                 use crate::HitObjectQuery as Q;
+                if query.of_spheres() {
+                    self.writer.use_extension("SPV_NV_linear_swept_spheres");
+                    let capability = match query {
+                        Q::IsSphereHit | Q::SpherePosition | Q::SphereRadius => {
+                            spirv::Capability::RayTracingSpheresGeometryNV
+                        }
+                        _ => spirv::Capability::RayTracingLinearSweptSpheresGeometryNV,
+                    };
+                    self.writer
+                        .require_any("sphere hit object queries", &[capability])?;
+                }
                 let op = match query {
                     Q::IsHit => spirv::Op::HitObjectIsHitNV,
                     Q::IsMiss => spirv::Op::HitObjectIsMissNV,
@@ -2231,13 +2242,58 @@ impl BlockContext<'_> {
                     Q::WorldRayDirection => spirv::Op::HitObjectGetWorldRayDirectionNV,
                     Q::ObjectToWorld => spirv::Op::HitObjectGetObjectToWorldNV,
                     Q::WorldToObject => spirv::Op::HitObjectGetWorldToObjectNV,
+                    Q::IsSphereHit => spirv::Op::HitObjectIsSphereHitNV,
+                    Q::IsLssHit => spirv::Op::HitObjectIsLSSHitNV,
+                    Q::SpherePosition => spirv::Op::HitObjectGetSpherePositionNV,
+                    Q::SphereRadius => spirv::Op::HitObjectGetSphereRadiusNV,
+                    Q::LssPositions => spirv::Op::HitObjectGetLSSPositionsNV,
+                    Q::LssRadii => spirv::Op::HitObjectGetLSSRadiiNV,
+                };
+                // A linear swept sphere's ends come as arrays of two, which
+                // naga reads as a matrix's columns and a vector's components.
+                let ends_of = match query {
+                    Q::LssPositions => Some(self.writer.get_numeric_type_id(NumericType::Vector {
+                        size: crate::VectorSize::Tri,
+                        scalar: crate::Scalar::F32,
+                    })),
+                    Q::LssRadii => Some(self.writer.get_f32_type_id()),
+                    _ => None,
                 };
                 let id = self.gen_id();
-                block.body.push(Instruction::hit_object(
-                    op,
-                    Some((result_type_id, id)),
-                    &[self.cached[hit_object]],
-                ));
+                match ends_of {
+                    None => block.body.push(Instruction::hit_object(
+                        op,
+                        Some((result_type_id, id)),
+                        &[self.cached[hit_object]],
+                    )),
+                    Some(end_type_id) => {
+                        let two = self.writer.get_constant_scalar(crate::Literal::U32(2));
+                        let array_type_id = self.gen_id();
+                        Instruction::type_array(array_type_id, end_type_id, two)
+                            .to_words(&mut self.writer.logical_layout.declarations);
+                        let array_id = self.gen_id();
+                        block.body.push(Instruction::hit_object(
+                            op,
+                            Some((array_type_id, array_id)),
+                            &[self.cached[hit_object]],
+                        ));
+                        let ends = [0, 1].map(|end| {
+                            let end_id = self.gen_id();
+                            block.body.push(Instruction::composite_extract(
+                                end_type_id,
+                                end_id,
+                                array_id,
+                                &[end],
+                            ));
+                            end_id
+                        });
+                        block.body.push(Instruction::composite_construct(
+                            result_type_id,
+                            id,
+                            &ends,
+                        ));
+                    }
+                }
                 id
             }
             crate::Expression::RayQueryCandidateAabbOpaque { query } => {
