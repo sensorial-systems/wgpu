@@ -3910,6 +3910,41 @@ fn binding_array_non_struct() {
     }
 }
 
+/// Compaction keeps a ray tracing stage's incoming payload, which is part of
+/// its interface though its body may never touch it, and remaps it past the
+/// globals compaction drops.
+#[test]
+fn compaction_keeps_incoming_ray_payloads() {
+    let source = r#"
+        enable wgpu_ray_tracing_pipeline;
+        var<private> unused_a: u32;
+        var<private> unused_b: u32;
+        var<incoming_ray_payload> incoming: u32;
+        @ray_generation fn generate() {}
+        @miss @incoming_payload(incoming) fn miss() {}
+    "#;
+    let mut module = naga::front::wgsl::parse_str(source).expect("source ought to parse");
+    naga::compact::compact(&mut module, KeepUnused::No);
+    let miss = module
+        .entry_points
+        .iter()
+        .find(|entry| entry.name == "miss")
+        .expect("the miss stage");
+    let payload = miss
+        .incoming_ray_payload
+        .expect("the miss stage's payload");
+    assert_eq!(
+        module.global_variables[payload].name.as_deref(),
+        Some("incoming")
+    );
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::RAY_TRACING_PIPELINE,
+    )
+    .validate(&module)
+    .expect("the compacted module ought to validate");
+}
+
 #[test]
 fn compaction_preserves_spans() {
     let source = r#"

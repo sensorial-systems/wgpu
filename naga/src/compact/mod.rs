@@ -135,6 +135,13 @@ pub fn compact(module: &mut crate::Module, keep_unused: KeepUnused) {
             if let Some(task_payload) = e.task_payload {
                 module_tracer.global_variables_used.insert(task_payload);
             }
+            // A ray tracing stage's incoming payload is part of its interface,
+            // whether or not its body touches it.
+            if let Some(incoming_ray_payload) = e.incoming_ray_payload {
+                module_tracer
+                    .global_variables_used
+                    .insert(incoming_ray_payload);
+            }
             if let Some(ref mesh_info) = e.mesh_info {
                 module_tracer
                     .global_variables_used
@@ -380,6 +387,9 @@ pub fn compact(module: &mut crate::Module, keep_unused: KeepUnused) {
         );
         if let Some(ref mut task_payload) = entry.task_payload {
             module_map.globals.adjust(task_payload);
+        }
+        if let Some(ref mut incoming_ray_payload) = entry.incoming_ray_payload {
+            module_map.globals.adjust(incoming_ray_payload);
         }
         if let Some(ref mut mesh_info) = entry.mesh_info {
             module_map.globals.adjust(&mut mesh_info.output_variable);
