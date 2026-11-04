@@ -35,6 +35,26 @@ changes, kept for reference.
 - **Ray tracing pipelines in wgpu-core and wgpu**: gfx-rs/wgpu#10144, merged
   in while it is in review. Ray tracing pipelines and passes, shader
   binding tables, and an intersection index on `TlasInstance`.
+- **What ray tracing pipelines lacked**, on top of #10144:
+  - naga: `ignoreIntersection()` and `terminateRay()` in any-hit stages
+    (`RayPipelineFunction::IgnoreIntersection`, `TerminateRay`), and
+    `traceRay(structure, descriptor, &payload, hit_group_offset,
+    miss_index)` (`RayGroups`, gfx-rs/wgpu#8894). Out-of-range choices are
+    safe where the SPIR-V writer is told the pipeline's counts
+    (`Options::ray_tracing_pipeline_groups`, which wgpu-hal sets): both
+    are clamped, and the shader binding table holds as many empty hit
+    groups past the last as an offset can reach.
+  - wgpu: several miss stages (`RayTracingPipelineDescriptor::misses`),
+    `RayTracingPass::trace_rays_indirect`, and timestamp writes on a ray
+    tracing pass. An indirect trace's size is not checked against the
+    device's limits, as an indirect dispatch's is.
+- **Incoming ray payloads through compaction**: naga's compaction, which
+  wgpu-core runs on every pipeline stage, neither kept a ray tracing
+  stage's incoming payload nor remapped its handle, so a miss stage that
+  never touches its payload failed pipeline creation with a panic.
+- **Binding arrays of uniform buffers in SPIR-V**: naga decorated the
+  structs of storage buffer binding arrays as `Block`s, but not those of
+  uniform buffers, which Vulkan requires of both.
 - **No timeline semaphores on PowerVR** (`wgpu-hal/src/vulkan/adapter.rs`,
   beside trunk's VeriSilicon exclusion): MediaTek's PowerVR drivers
   dereference null inside `vkQueueSubmit` with them. Revving crashed on its
@@ -50,3 +70,6 @@ WebGPU), `TextureFormat::is_srgb` renamed `has_srgb_suffix`, wgpu-hal's
 `create_buffer` returning the allocated size too, `TlasInstance::new` taking
 an intersection index, and naga's `RayQueryFunction::Begin`. Its WebGPU
 bindings need js-sys/web-sys 0.3.104 or later.
+
+naga's snapshot tests (`cargo test -p naga --test naga snapshots`) need
+`spirv-cross` and `spirv-as` from the Vulkan SDK on the path.
