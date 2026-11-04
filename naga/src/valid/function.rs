@@ -186,6 +186,8 @@ pub enum FunctionError {
     MissingRayQueryVertexReturn(Handle<crate::Expression>),
     #[error("Ray descriptor {0:?} is not a matching expression")]
     InvalidRayDescriptor(Handle<crate::Expression>),
+    #[error("Ray group index {0:?} is not a `u32`")]
+    InvalidRayGroupIndex(Handle<crate::Expression>),
     #[error("Ray Query {0:?} does not have a matching type")]
     InvalidRayQueryType(Handle<crate::Type>),
     #[error("Hit distance {0:?} must be an f32")]
@@ -1709,6 +1711,7 @@ impl super::Validator {
                         acceleration_structure,
                         descriptor,
                         payload,
+                        groups,
                     } => {
                         match *context.resolve_type_inner(
                             acceleration_structure,
@@ -1784,6 +1787,24 @@ impl super::Validator {
                             return Err(FunctionError::InvalidRayDescriptor(descriptor)
                                 .with_span_static(span, "invalid ray descriptor"));
                         }
+
+                        if let Some(groups) = groups {
+                            for index in [groups.hit_group_offset, groups.miss_index] {
+                                match *context
+                                    .resolve_type_inner(index, &self.valid_expression_set)?
+                                {
+                                    Ti::Scalar(crate::Scalar::U32) => {}
+                                    _ => {
+                                        return Err(FunctionError::InvalidRayGroupIndex(index)
+                                            .with_span_handle(index, context.expressions))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    crate::RayPipelineFunction::IgnoreIntersection
+                    | crate::RayPipelineFunction::TerminateRay => {
+                        stages &= super::ShaderStages::ANY_HIT;
                     }
                 },
 

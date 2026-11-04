@@ -926,11 +926,18 @@ fn adjust_stmt(new_pos: &HandleVec<Expression, Handle<Expression>>, stmt: &mut S
                 ref mut acceleration_structure,
                 ref mut descriptor,
                 ref mut payload,
+                ref mut groups,
             } => {
                 adjust(acceleration_structure);
                 adjust(descriptor);
                 adjust(payload);
+                if let Some(groups) = groups {
+                    adjust(&mut groups.hit_group_offset);
+                    adjust(&mut groups.miss_index);
+                }
             }
+            crate::RayPipelineFunction::IgnoreIntersection
+            | crate::RayPipelineFunction::TerminateRay => {}
         },
         Statement::DebugPrintf {
             format: _,

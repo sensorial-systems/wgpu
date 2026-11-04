@@ -6129,6 +6129,50 @@ fn check_ray_tracing_pipeline_hit_barycentrics_stage() {
     }
 }
 
+/// Checks `ignoreIntersection` and `terminateRay` are only valid in an any-hit
+/// stage, which they end.
+#[test]
+fn check_ray_tracing_pipeline_verdicts_stage() {
+    for verdict in ["ignoreIntersection", "terminateRay"] {
+        for stage in ["@closest_hit", "@miss"] {
+            check_one_validation!(
+                &format!(
+                    "enable wgpu_ray_tracing_pipeline;
+                var<incoming_ray_payload> incoming: u32;
+
+                {stage} @incoming_payload(incoming) fn main() {{ {verdict}(); }}"
+                ),
+                Err(naga::valid::ValidationError::EntryPoint {
+                    source: naga::valid::EntryPointError::ForbiddenStageOperations,
+                    ..
+                },),
+                Capabilities::RAY_TRACING_PIPELINE
+            );
+        }
+    }
+}
+
+/// Checks a `traceRay`'s hit group offset and miss index must be `u32`s.
+#[test]
+fn check_ray_tracing_pipeline_ray_groups_type() {
+    check_one_validation!(
+        "enable wgpu_ray_tracing_pipeline;
+        var<ray_payload> payload: u32;
+        @group(0) @binding(0) var acc_struct: acceleration_structure;
+
+        @ray_generation fn main() {
+            traceRay(acc_struct, RayDesc(), &payload, 1i, 0u);
+        }",
+        Err(naga::valid::ValidationError::EntryPoint {
+            source: naga::valid::EntryPointError::Function(
+                naga::valid::FunctionError::InvalidRayGroupIndex(_)
+            ),
+            ..
+        },),
+        Capabilities::RAY_TRACING_PIPELINE
+    );
+}
+
 /// Checks ray generation stage is invalid without enable extension (other stages require `@incoming_payload` which forces a ray payload which is checked in [`check_ray_tracing_pipeline_payload`])
 #[test]
 fn check_ray_tracing_pipeline_ray_generation() {

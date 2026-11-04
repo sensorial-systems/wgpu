@@ -1194,20 +1194,33 @@ impl FunctionInfo {
                     },
                     exit: ExitFlags::empty(),
                 },
-                S::RayPipelineFunction(ref fun) => {
-                    match *fun {
-                        crate::RayPipelineFunction::TraceRay {
-                            acceleration_structure,
-                            descriptor,
-                            payload,
-                        } => {
-                            let _ = self.add_ref(acceleration_structure);
-                            let _ = self.add_ref(descriptor);
-                            let _ = self.add_ref(payload);
+                S::RayPipelineFunction(ref fun) => match *fun {
+                    crate::RayPipelineFunction::TraceRay {
+                        acceleration_structure,
+                        descriptor,
+                        payload,
+                        groups,
+                    } => {
+                        let _ = self.add_ref(acceleration_structure);
+                        let _ = self.add_ref(descriptor);
+                        let _ = self.add_ref(payload);
+                        if let Some(groups) = groups {
+                            let _ = self.add_ref(groups.hit_group_offset);
+                            let _ = self.add_ref(groups.miss_index);
                         }
+                        FunctionUniformity::new()
                     }
-                    FunctionUniformity::new()
-                }
+                    // These end the stage, as `Kill` does.
+                    crate::RayPipelineFunction::IgnoreIntersection
+                    | crate::RayPipelineFunction::TerminateRay => FunctionUniformity {
+                        result: Uniformity::new(),
+                        exit: if disruptor.is_some() {
+                            ExitFlags::MAY_KILL
+                        } else {
+                            ExitFlags::empty()
+                        },
+                    },
+                },
                 S::DebugPrintf {
                     format: _,
                     ref arguments,

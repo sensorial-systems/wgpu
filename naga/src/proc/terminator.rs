@@ -28,7 +28,16 @@ pub fn ensure_block_returns(block: &mut crate::Block) {
                 }
             }
         }
-        Some(&mut (S::Break | S::Continue | S::Return { .. } | S::Kill)) => (),
+        Some(
+            &mut (S::Break
+            | S::Continue
+            | S::Return { .. }
+            | S::Kill
+            | S::RayPipelineFunction(
+                crate::RayPipelineFunction::IgnoreIntersection
+                | crate::RayPipelineFunction::TerminateRay,
+            )),
+        ) => (),
         Some(
             &mut (S::Emit(_)
             | S::Loop { .. }
@@ -45,7 +54,7 @@ pub fn ensure_block_returns(block: &mut crate::Block) {
             | S::ControlBarrier(_)
             | S::MemoryBarrier(_)
             | S::CooperativeStore { .. }
-            | S::RayPipelineFunction(_)
+            | S::RayPipelineFunction(crate::RayPipelineFunction::TraceRay { .. })
             | S::DebugPrintf { .. }),
         )
         | None => block.push(S::Return { value: None }, Default::default()),

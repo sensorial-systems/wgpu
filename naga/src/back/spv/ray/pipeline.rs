@@ -27,8 +27,14 @@ impl Writer {
                 .expect("ray desc should be set if `traceRays` is called"),
         );
 
+        let u32_type_id = self.get_u32_type_id();
         let (func_id, mut function, arg_ids) = self.write_function_signature(
-            &[acceleration_structure_type_id, ray_desc_type_id],
+            &[
+                acceleration_structure_type_id,
+                ray_desc_type_id,
+                u32_type_id,
+                u32_type_id,
+            ],
             self.void_type,
         );
 
@@ -38,6 +44,30 @@ impl Writer {
 
         let label_id = self.id_gen.next();
         let mut block = Block::new(label_id);
+
+        // The hit group offset and the miss index, kept inside the
+        // pipeline's shader binding table where its counts are known.
+        let (hit_group_offset_id, miss_index_id) = match self.ray_tracing_pipeline_groups {
+            Some(groups) => {
+                let mut clamped = |value: spirv::Word, count: u32| {
+                    let last = self.get_constant_scalar(crate::Literal::U32(count.max(1) - 1));
+                    let id = self.id_gen.next();
+                    block.body.push(Instruction::ext_inst_gl_op(
+                        self.gl450_ext_inst_id,
+                        spirv::GlslStd450Op::UMin,
+                        u32_type_id,
+                        id,
+                        &[value, last],
+                    ));
+                    id
+                };
+                (
+                    clamped(arg_ids[2], groups.hit_groups),
+                    clamped(arg_ids[3], groups.misses),
+                )
+            }
+            None => (arg_ids[2], arg_ids[3]),
+        };
 
         let super::ExtractedRayDesc {
             ray_flags_id,
@@ -75,15 +105,16 @@ impl Writer {
             }
         }
 
+        // A stride of zero: every geometry of an instance has its hit group.
         let zero = self.get_constant_scalar(crate::Literal::U32(0));
 
         valid_block.body.push(Instruction::trace_ray(
             acceleration_structure_id,
             ray_flags_id,
             cull_mask_id,
+            hit_group_offset_id,
             zero,
-            zero,
-            zero,
+            miss_index_id,
             ray_origin_id,
             tmin_id,
             ray_dir_id,
@@ -131,6 +162,7 @@ impl BlockContext<'_> {
                 acceleration_structure,
                 descriptor,
                 payload,
+                groups,
             } => {
                 // Checked for when validating the module in `validate_block_impl`.
                 let crate::Expression::GlobalVariable(payload) =
@@ -142,6 +174,17 @@ impl BlockContext<'_> {
                 let desc_id = self.cached[descriptor];
                 let acc_struct_id = self.get_handle_id(acceleration_structure);
 
+                let (hit_group_offset_id, miss_index_id) = match groups {
+                    Some(groups) => (
+                        self.cached[groups.hit_group_offset],
+                        self.cached[groups.miss_index],
+                    ),
+                    None => {
+                        let zero = self.writer.get_constant_scalar(crate::Literal::U32(0));
+                        (zero, zero)
+                    }
+                };
+
                 let func = self.writer.write_trace_ray(self.ir_module, payload);
 
                 let func_id = self.gen_id();
@@ -149,9 +192,12 @@ impl BlockContext<'_> {
                     self.writer.void_type,
                     func_id,
                     func,
-                    &[acc_struct_id, desc_id],
+                    &[acc_struct_id, desc_id, hit_group_offset_id, miss_index_id],
                 ));
             }
+            // Block terminators: written in `write_block`.
+            crate::RayPipelineFunction::IgnoreIntersection
+            | crate::RayPipelineFunction::TerminateRay => unreachable!(),
         }
     }
 }

@@ -880,12 +880,19 @@ impl super::Validator {
                     acceleration_structure,
                     descriptor,
                     payload,
+                    groups,
                 } => {
                     validate_expr(acceleration_structure)?;
                     validate_expr(descriptor)?;
                     validate_expr(payload)?;
+                    if let Some(groups) = groups {
+                        validate_expr(groups.hit_group_offset)?;
+                        validate_expr(groups.miss_index)?;
+                    }
                     Ok(())
                 }
+                crate::RayPipelineFunction::IgnoreIntersection
+                | crate::RayPipelineFunction::TerminateRay => Ok(()),
             },
             crate::Statement::DebugPrintf {
                 format: _,

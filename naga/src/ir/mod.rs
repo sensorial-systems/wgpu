@@ -2804,9 +2804,46 @@ pub enum RayPipelineFunction {
 
         /// A pointer in the ray_payload or incoming_ray_payload address spaces
         payload: Handle<Expression>,
-        // Do we want miss index? What about sbt offset and sbt stride (could be hard to validate)?
-        // https://github.com/gfx-rs/wgpu/issues/8894
+
+        /// Which hit group and miss stage the trace calls, if not the first:
+        /// see [`RayGroups`].
+        groups: Option<RayGroups>,
     },
+
+    /// Passes over the candidate intersection an any-hit stage is
+    /// considering, as if it had not been hit, and ends the stage.
+    ///
+    /// Valid only in [`ShaderStage::AnyHit`].
+    IgnoreIntersection,
+
+    /// Accepts the candidate intersection an any-hit stage is considering,
+    /// ends the stage and ends the ray's search: the candidate is the closest
+    /// hit.
+    ///
+    /// Valid only in [`ShaderStage::AnyHit`].
+    TerminateRay,
+}
+
+/// The hit group and miss stage a [`RayPipelineFunction::TraceRay`] calls.
+///
+/// A ray tracing pipeline holds a list of hit groups and a list of miss
+/// stages. A trace calls the hit group at the hit instance's own index plus
+/// `hit_group_offset`, and the miss stage at `miss_index`; without these,
+/// both are zero.
+///
+/// Out of range, neither is undefined behavior where the backend is told the
+/// pipeline's counts (as wgpu does): the offset is clamped to one less than
+/// the number of hit groups, past which the pipeline's shader binding table
+/// holds empty hit groups, and the miss index to the last miss stage.
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub struct RayGroups {
+    /// A `u32` added to the hit instance's hit group index.
+    pub hit_group_offset: Handle<Expression>,
+    /// A `u32`, the index of the miss stage.
+    pub miss_index: Handle<Expression>,
 }
 
 /// Shader module.

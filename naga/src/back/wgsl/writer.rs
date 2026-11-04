@@ -1232,6 +1232,7 @@ impl<W: Write> Writer<W> {
                     acceleration_structure,
                     descriptor,
                     payload,
+                    groups,
                 } => {
                     write!(self.out, "{level}traceRay(")?;
                     self.write_expr(module, acceleration_structure, func_ctx)?;
@@ -1239,7 +1240,19 @@ impl<W: Write> Writer<W> {
                     self.write_expr(module, descriptor, func_ctx)?;
                     write!(self.out, ", ")?;
                     self.write_expr(module, payload, func_ctx)?;
+                    if let Some(groups) = groups {
+                        write!(self.out, ", ")?;
+                        self.write_expr(module, groups.hit_group_offset, func_ctx)?;
+                        write!(self.out, ", ")?;
+                        self.write_expr(module, groups.miss_index, func_ctx)?;
+                    }
                     writeln!(self.out, ");")?
+                }
+                crate::RayPipelineFunction::IgnoreIntersection => {
+                    writeln!(self.out, "{level}ignoreIntersection();")?
+                }
+                crate::RayPipelineFunction::TerminateRay => {
+                    writeln!(self.out, "{level}terminateRay();")?
                 }
             },
             Statement::DebugPrintf {

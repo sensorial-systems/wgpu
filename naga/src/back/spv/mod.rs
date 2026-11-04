@@ -993,6 +993,8 @@ pub struct Writer {
     task_dispatch_limits: Option<TaskDispatchLimits>,
     /// See docs in [`Options`]
     mesh_shader_primitive_indices_clamp: bool,
+    /// See docs in [`Options`]
+    ray_tracing_pipeline_groups: Option<RayTracingPipelineGroups>,
 }
 
 bitflags::bitflags! {
@@ -1116,6 +1118,28 @@ pub struct Options<'a> {
     /// implementation-defined results when the divisor is zero. Appropriate
     /// for compute shaders where the developer guarantees non-zero divisors.
     pub emit_int_div_checks: bool,
+
+    /// The hit groups and miss stages of the ray tracing pipeline the
+    /// module is written for, if it is.
+    ///
+    /// Where given, a `traceRay`'s hit group offset is clamped below the
+    /// number of hit groups, and its miss index to the last miss stage, so
+    /// that no choice reads past the pipeline's shader binding table -- as
+    /// long as the table holds that many empty hit groups after the last,
+    /// which an instance's own index plus the offset can reach.
+    pub ray_tracing_pipeline_groups: Option<RayTracingPipelineGroups>,
+}
+
+/// How many hit groups and miss stages a ray tracing pipeline has: see
+/// [`Options::ray_tracing_pipeline_groups`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serialize", derive(serde::Serialize))]
+#[cfg_attr(feature = "deserialize", derive(serde::Deserialize))]
+pub struct RayTracingPipelineGroups {
+    /// The number of hit groups.
+    pub hit_groups: u32,
+    /// The number of miss stages.
+    pub misses: u32,
 }
 
 impl Default for Options<'_> {
@@ -1142,6 +1166,7 @@ impl Default for Options<'_> {
             task_dispatch_limits: None,
             mesh_shader_primitive_indices_clamp: true,
             emit_int_div_checks: true,
+            ray_tracing_pipeline_groups: None,
         }
     }
 }

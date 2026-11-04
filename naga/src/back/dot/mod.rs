@@ -419,6 +419,7 @@ impl StatementGraph {
                         acceleration_structure,
                         descriptor,
                         payload,
+                        groups,
                     } => {
                         self.dependencies.push((
                             id,
@@ -427,8 +428,15 @@ impl StatementGraph {
                         ));
                         self.dependencies.push((id, descriptor, "descriptor"));
                         self.dependencies.push((id, payload, "payload"));
+                        if let Some(groups) = groups {
+                            self.dependencies
+                                .push((id, groups.hit_group_offset, "hit_group_offset"));
+                            self.dependencies.push((id, groups.miss_index, "miss_index"));
+                        }
                         "TraceRay"
                     }
+                    crate::RayPipelineFunction::IgnoreIntersection => "IgnoreIntersection",
+                    crate::RayPipelineFunction::TerminateRay => "TerminateRay",
                 },
                 S::DebugPrintf {
                     format: _,

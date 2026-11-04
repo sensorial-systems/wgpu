@@ -120,6 +120,7 @@ impl Writer {
             ),
             debug_printf: None,
             task_dispatch_limits: options.task_dispatch_limits,
+            ray_tracing_pipeline_groups: options.ray_tracing_pipeline_groups,
             mesh_shader_primitive_indices_clamp: options.mesh_shader_primitive_indices_clamp,
         })
     }
@@ -140,6 +141,7 @@ impl Writer {
         self.io_f16_polyfills =
             super::f16_polyfill::F16IoPolyfill::new(options.use_storage_input_output_16);
         self.task_dispatch_limits = options.task_dispatch_limits;
+        self.ray_tracing_pipeline_groups = options.ray_tracing_pipeline_groups;
         self.mesh_shader_primitive_indices_clamp = options.mesh_shader_primitive_indices_clamp;
         Ok(())
     }
@@ -181,6 +183,7 @@ impl Writer {
             fake_missing_bindings: self.fake_missing_bindings,
             binding_map: take(&mut self.binding_map),
             task_dispatch_limits: self.task_dispatch_limits,
+            ray_tracing_pipeline_groups: self.ray_tracing_pipeline_groups,
             mesh_shader_primitive_indices_clamp: self.mesh_shader_primitive_indices_clamp,
             emit_int_div_checks: self.emit_int_div_checks,
 

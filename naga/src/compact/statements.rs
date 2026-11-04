@@ -186,11 +186,18 @@ impl FunctionTracer<'_> {
                             acceleration_structure,
                             descriptor,
                             payload,
+                            groups,
                         } => {
                             self.expressions_used.insert(acceleration_structure);
                             self.expressions_used.insert(descriptor);
                             self.expressions_used.insert(payload);
+                            if let Some(groups) = groups {
+                                self.expressions_used.insert(groups.hit_group_offset);
+                                self.expressions_used.insert(groups.miss_index);
+                            }
                         }
+                        crate::RayPipelineFunction::IgnoreIntersection
+                        | crate::RayPipelineFunction::TerminateRay => {}
                     },
                     St::DebugPrintf {
                         format: _,
@@ -433,11 +440,18 @@ impl FunctionMap {
                             ref mut acceleration_structure,
                             ref mut descriptor,
                             ref mut payload,
+                            ref mut groups,
                         } => {
                             adjust(acceleration_structure);
                             adjust(descriptor);
                             adjust(payload);
+                            if let Some(groups) = groups {
+                                adjust(&mut groups.hit_group_offset);
+                                adjust(&mut groups.miss_index);
+                            }
                         }
+                        crate::RayPipelineFunction::IgnoreIntersection
+                        | crate::RayPipelineFunction::TerminateRay => {}
                     },
                     St::DebugPrintf {
                         format: _,

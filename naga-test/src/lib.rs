@@ -129,6 +129,8 @@ pub struct SpirvOutParameters {
     pub ray_query_initialization_tracking: bool,
     pub use_storage_input_output_16: bool,
     pub emit_int_div_checks: bool,
+    /// `[hit_groups, misses]`: the ray tracing pipeline's group counts.
+    pub ray_tracing_pipeline_groups: Option<[u32; 2]>,
 }
 impl Default for SpirvOutParameters {
     fn default() -> Self {
@@ -143,6 +145,7 @@ impl Default for SpirvOutParameters {
             ray_query_initialization_tracking: true,
             use_storage_input_output_16: true,
             emit_int_div_checks: true,
+            ray_tracing_pipeline_groups: None,
             binding_map: naga::back::spv::BindingMap::default(),
         }
     }
@@ -182,6 +185,9 @@ impl SpirvOutParameters {
             mesh_shader_primitive_indices_clamp: shared_info.mesh_output_validation,
             trace_ray_argument_validation: true,
             emit_int_div_checks: self.emit_int_div_checks,
+            ray_tracing_pipeline_groups: self.ray_tracing_pipeline_groups.map(
+                |[hit_groups, misses]| spv::RayTracingPipelineGroups { hit_groups, misses },
+            ),
         }
     }
 }

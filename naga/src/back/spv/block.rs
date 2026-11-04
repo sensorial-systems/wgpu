@@ -3572,6 +3572,10 @@ impl BlockContext<'_> {
                         | Statement::Break
                         | Statement::Continue
                         | Statement::Kill
+                        | Statement::RayPipelineFunction(
+                            crate::RayPipelineFunction::IgnoreIntersection
+                                | crate::RayPipelineFunction::TerminateRay
+                        )
                         | Statement::Return { .. }
                         | Statement::Loop { .. })
                 ),
@@ -3884,6 +3888,17 @@ impl BlockContext<'_> {
                 }
                 Statement::Kill => {
                     self.function.consume(block, Instruction::kill());
+                    return Ok(BlockExitDisposition::Discarded);
+                }
+                // Each ends the any-hit stage, as `OpKill` a fragment.
+                Statement::RayPipelineFunction(crate::RayPipelineFunction::IgnoreIntersection) => {
+                    self.function
+                        .consume(block, Instruction::new(spirv::Op::IgnoreIntersectionKHR));
+                    return Ok(BlockExitDisposition::Discarded);
+                }
+                Statement::RayPipelineFunction(crate::RayPipelineFunction::TerminateRay) => {
+                    self.function
+                        .consume(block, Instruction::new(spirv::Op::TerminateRayKHR));
                     return Ok(BlockExitDisposition::Discarded);
                 }
                 Statement::ControlBarrier(flags) => {

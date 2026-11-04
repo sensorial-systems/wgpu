@@ -3913,10 +3913,21 @@ impl<'source, 'temp> Lowerer<'source, 'temp> {
                     )
                 }
                 "traceRay" => {
-                    let mut args = ctx.prepare_args(arguments, 3, function_span);
+                    // `traceRay(structure, descriptor, &payload)`, or with
+                    // the hit group offset and miss index after the payload.
+                    let count = if arguments.len() == 5 { 5 } else { 3 };
+                    let mut args = ctx.prepare_args(arguments, count, function_span);
                     let acceleration_structure = self.expression(args.next()?, ctx)?;
                     let descriptor = self.expression(args.next()?, ctx)?;
                     let payload = self.expression(args.next()?, ctx)?;
+                    let groups = if count == 5 {
+                        Some(ir::RayGroups {
+                            hit_group_offset: self.expression(args.next()?, ctx)?,
+                            miss_index: self.expression(args.next()?, ctx)?,
+                        })
+                    } else {
+                        None
+                    };
                     args.finish()?;
 
                     let _ = ctx.module.generate_ray_desc_type();
@@ -3924,8 +3935,23 @@ impl<'source, 'temp> Lowerer<'source, 'temp> {
                         acceleration_structure,
                         descriptor,
                         payload,
+                        groups,
                     };
 
+                    let rctx = ctx.runtime_expression_ctx(function_span)?;
+                    rctx.block
+                        .extend(rctx.emitter.finish(&rctx.function.expressions));
+                    rctx.emitter.start(&rctx.function.expressions);
+                    rctx.block
+                        .push(ir::Statement::RayPipelineFunction(fun), function_span);
+                    return Ok(None);
+                }
+                "ignoreIntersection" | "terminateRay" => {
+                    ctx.prepare_args(arguments, 0, function_span).finish()?;
+                    let fun = match function_name {
+                        "ignoreIntersection" => ir::RayPipelineFunction::IgnoreIntersection,
+                        _ => ir::RayPipelineFunction::TerminateRay,
+                    };
                     let rctx = ctx.runtime_expression_ctx(function_span)?;
                     rctx.block
                         .extend(rctx.emitter.finish(&rctx.function.expressions));
