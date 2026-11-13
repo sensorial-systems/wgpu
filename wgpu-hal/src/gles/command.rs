@@ -565,6 +565,9 @@ impl crate::CommandEncoder for super::CommandEncoder {
                                     super::PrivateCapabilities::MULTISAMPLED_RENDER_TO_TEXTURE,
                                 )
                                 && !cat.ops.contains(crate::AttachmentOps::STORE)
+                                // Beside a depth attachment (multisampled, as the pass is)
+                                // the framebuffer is incomplete on Mali: resolved instead
+                                && desc.depth_stencil_attachment.is_none()
                                 // Extension specifies that only COLOR_ATTACHMENT0 is valid
                                 && i == 0
                             {

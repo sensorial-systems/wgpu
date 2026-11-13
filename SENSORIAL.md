@@ -107,6 +107,14 @@ changes, kept for reference.
   dereference null inside `vkQueueSubmit` with them. Revving crashed on its
   first frames on a moto g54 5G (`vulkan.mtk.so`) and a moto g play 2023
   (`vulkan.mt6765.so`) in Firebase Test Lab, and runs on both with fences.
+- **Multisampled render-to-texture only without a depth attachment**
+  (`wgpu-hal/src/gles/command.rs`): a pass that lets go of its
+  multisampled colour and resolves it into a texture drew straight into
+  that texture (`EXT_multisampled_render_to_texture`) beside its
+  multisampled depth renderbuffer, a framebuffer Mali's OpenGL ES driver
+  (a POCO X7's Mali-G615) calls incomplete, so that nothing was drawn:
+  branding-motion's intro, in Revving, came out black. With a depth
+  attachment the colour is resolved by a blit, as where it is stored.
 
 ## What trunk changed for its users
 
