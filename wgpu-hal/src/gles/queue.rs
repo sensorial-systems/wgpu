@@ -126,6 +126,7 @@ impl super::Queue {
             }
             super::TextureInner::DefaultRenderbuffer => panic!("Unexpected default RBO"),
             super::TextureInner::Texture { raw, target } => {
+                let target = self.shared.texture_target(gl, raw, target, None);
                 let num_layers = view.array_layers.end - view.array_layers.start;
                 if num_layers > 1 {
                     #[cfg(webgl)]
@@ -472,6 +473,7 @@ impl super::Queue {
                 dst_premultiplication,
                 ref copy,
             } => {
+                let dst_target = self.shared.texture_target(gl, dst, dst_target, None);
                 const UNPACK_FLIP_Y_WEBGL: u32 =
                     web_sys::WebGl2RenderingContext::UNPACK_FLIP_Y_WEBGL;
                 const UNPACK_PREMULTIPLY_ALPHA_WEBGL: u32 =
@@ -723,6 +725,8 @@ impl super::Queue {
                 dst_target,
                 ref copy,
             } => {
+                let src_target = self.shared.texture_target(gl, src, src_target, None);
+                let dst_target = self.shared.texture_target(gl, dst, dst_target, None);
                 unsafe { gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(self.copy_fbo)) };
                 unsafe { gl.bind_texture(dst_target, Some(dst)) };
 
@@ -790,6 +794,7 @@ impl super::Queue {
                 dst_format,
                 ref copy,
             } => {
+                let dst_target = self.shared.texture_target(gl, dst, dst_target, None);
                 let (block_width, block_height) = dst_format.block_dimensions();
                 let block_size = dst_format.block_copy_size(None).unwrap();
                 let format_desc = self.shared.describe_texture_format(dst_format);
@@ -928,6 +933,7 @@ impl super::Queue {
                 dst_target: _,
                 ref copy,
             } => {
+                let src_target = self.shared.texture_target(gl, src, src_target, None);
                 let block_size = src_format.block_copy_size(None).unwrap();
                 if src_format.is_compressed() {
                     log::error!("Not implemented yet: compressed texture copy to buffer");

@@ -296,6 +296,45 @@ struct AdapterShared {
     /// Cached here so it doesn't need to be queried every time texture format capabilities are requested.
     /// (this has been shown to be a significant enough overhead)
     max_msaa_samples: i32,
+
+    /// The textures made with [`UNDECIDED_TARGET`], by name: the storage to
+    /// make until it is made, then the target it was made with. When both
+    /// are locked, the context is locked first.
+    undecided_textures: Mutex<FastHashMap<glow::Texture, TextureTarget>>,
+}
+
+/// The target [`TextureInner::Texture`] holds for a texture that could be an
+/// array of layers or of cube maps; [`AdapterShared::undecided_textures`]
+/// holds the one it is made with.
+///
+/// A GL texture is one or the other for good from its first bind, and how it
+/// will be viewed is not known when it is made. So such a texture (2D,
+/// sampled, of square layers six or a multiple of six in number) has its
+/// storage made once its first view that tells is created: a `D2Array` view
+/// makes it an array, a `Cube` or `CubeArray` view cube maps. If it is used
+/// before any such view, it is made cube maps, as every such texture was
+/// before.
+pub const UNDECIDED_TARGET: BindTarget = 0;
+
+/// What [`AdapterShared::undecided_textures`] holds of a texture.
+#[derive(Debug)]
+enum TextureTarget {
+    /// The storage to make once the target is chosen, and the label to give it.
+    Pending {
+        storage: TextureStorage,
+        label: Option<String>,
+    },
+    /// The target the storage was made with.
+    Chosen(BindTarget),
+}
+
+/// A texture's storage, as described when the texture was made.
+#[derive(Debug)]
+struct TextureStorage {
+    format: wgt::TextureFormat,
+    size: wgt::Extent3d,
+    mip_level_count: u32,
+    sample_count: u32,
 }
 
 impl fmt::Debug for AdapterShared {
@@ -312,6 +351,7 @@ impl fmt::Debug for AdapterShared {
             program_cache: _,
             es,
             max_msaa_samples,
+            undecided_textures: _,
         } = self;
         f.debug_struct("AdapterShared")
             .field("private_caps", private_caps)

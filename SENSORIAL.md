@@ -122,6 +122,15 @@ changes, kept for reference.
   in was invalid. It is now made, attached and bound with the multisampled
   target, without the sampler state GLES refuses on it. Revving's High,
   whose multisampled depth the smoke reads, drew nothing of the engine.
+- **An array of six layers or a cube map, as its first view tells**
+  (`wgpu-hal/src/gles`): a sampled 2D texture of square layers, six or a
+  multiple of six, was always made cube maps, as GL fixes a texture's target
+  when it is made and the views were not known yet; viewed as a `D2Array` it
+  was no texture at all. Its storage now waits for its first view that
+  tells (`D2Array`, `Cube` or `CubeArray`), or, used before any, is made cube
+  maps as before (`UNDECIDED_TARGET`, `AdapterShared::undecided_textures`).
+  Revving's High, which reads its six sky shadow maps as an array, drew
+  nothing of the engine.
 
 ## What trunk changed for its users
 

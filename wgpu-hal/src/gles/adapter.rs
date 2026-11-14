@@ -969,6 +969,7 @@ impl super::Adapter {
                     program_cache: Default::default(),
                     es: es_ver.is_some(),
                     max_msaa_samples: max_samples,
+                    undecided_textures: Default::default(),
                 }),
             },
             info: Self::make_info(vendor, renderer, version),

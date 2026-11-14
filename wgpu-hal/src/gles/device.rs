@@ -1001,172 +1001,33 @@ impl crate::Device for super::Device {
             super::TextureInner::Renderbuffer { raw }
         } else {
             let raw = unsafe { gl.create_texture().unwrap() };
-            let target = super::Texture::get_info_from_desc(desc);
-
-            unsafe { gl.bind_texture(target, Some(raw)) };
-            //Note: this has to be done before defining the storage!
-            match desc.format.sample_type(None, Some(self.shared.features)) {
-                Some(
-                    wgt::TextureSampleType::Float { filterable: false }
-                    | wgt::TextureSampleType::Uint
-                    | wgt::TextureSampleType::Sint,
-                ) if target != glow::TEXTURE_2D_MULTISAMPLE => {
-                    // reset default filtering mode
-                    unsafe {
-                        gl.tex_parameter_i32(target, glow::TEXTURE_MIN_FILTER, glow::NEAREST as i32)
-                    };
-                    unsafe {
-                        gl.tex_parameter_i32(target, glow::TEXTURE_MAG_FILTER, glow::NEAREST as i32)
-                    };
+            let storage = super::TextureStorage {
+                format: desc.format,
+                size: desc.size,
+                mip_level_count: desc.mip_level_count,
+                sample_count: desc.sample_count,
+            };
+            if desc.is_cube_compatible() && desc.usage.contains(wgt::TextureUses::RESOURCE) {
+                // An array of layers or of cube maps: made once a view tells.
+                self.shared.undecided_textures.lock().insert(
+                    raw,
+                    super::TextureTarget::Pending {
+                        storage,
+                        label: desc.label.map(ToOwned::to_owned),
+                    },
+                );
+                super::TextureInner::Texture {
+                    raw,
+                    target: super::UNDECIDED_TARGET,
                 }
-                _ => {}
-            }
-
-            if conv::is_layered_target(target) {
-                unsafe {
-                    if self
-                        .shared
-                        .private_caps
-                        .contains(PrivateCapabilities::TEXTURE_STORAGE)
-                    {
-                        gl.tex_storage_3d(
-                            target,
-                            desc.mip_level_count as i32,
-                            format_desc.internal,
-                            desc.size.width as i32,
-                            desc.size.height as i32,
-                            desc.size.depth_or_array_layers as i32,
-                        )
-                    } else if target == glow::TEXTURE_3D {
-                        let mut width = desc.size.width;
-                        let mut height = desc.size.height;
-                        let mut depth = desc.size.depth_or_array_layers;
-                        for i in 0..desc.mip_level_count {
-                            gl.tex_image_3d(
-                                target,
-                                i as i32,
-                                format_desc.internal as i32,
-                                width as i32,
-                                height as i32,
-                                depth as i32,
-                                0,
-                                format_desc.external,
-                                format_desc.data_type,
-                                glow::PixelUnpackData::Slice(None),
-                            );
-                            width = max(1, width / 2);
-                            height = max(1, height / 2);
-                            depth = max(1, depth / 2);
-                        }
-                    } else {
-                        let mut width = desc.size.width;
-                        let mut height = desc.size.height;
-                        for i in 0..desc.mip_level_count {
-                            gl.tex_image_3d(
-                                target,
-                                i as i32,
-                                format_desc.internal as i32,
-                                width as i32,
-                                height as i32,
-                                desc.size.depth_or_array_layers as i32,
-                                0,
-                                format_desc.external,
-                                format_desc.data_type,
-                                glow::PixelUnpackData::Slice(None),
-                            );
-                            width = max(1, width / 2);
-                            height = max(1, height / 2);
-                        }
-                    }
-                };
-            } else if desc.sample_count > 1 {
-                unsafe {
-                    gl.tex_storage_2d_multisample(
-                        target,
-                        desc.sample_count as i32,
-                        format_desc.internal,
-                        desc.size.width as i32,
-                        desc.size.height as i32,
-                        true,
-                    )
-                };
             } else {
+                let target = super::Texture::get_info_from_desc(desc);
                 unsafe {
-                    if self
-                        .shared
-                        .private_caps
-                        .contains(PrivateCapabilities::TEXTURE_STORAGE)
-                    {
-                        gl.tex_storage_2d(
-                            target,
-                            desc.mip_level_count as i32,
-                            format_desc.internal,
-                            desc.size.width as i32,
-                            desc.size.height as i32,
-                        )
-                    } else if target == glow::TEXTURE_CUBE_MAP {
-                        let mut width = desc.size.width;
-                        let mut height = desc.size.height;
-                        for i in 0..desc.mip_level_count {
-                            for face in [
-                                glow::TEXTURE_CUBE_MAP_POSITIVE_X,
-                                glow::TEXTURE_CUBE_MAP_NEGATIVE_X,
-                                glow::TEXTURE_CUBE_MAP_POSITIVE_Y,
-                                glow::TEXTURE_CUBE_MAP_NEGATIVE_Y,
-                                glow::TEXTURE_CUBE_MAP_POSITIVE_Z,
-                                glow::TEXTURE_CUBE_MAP_NEGATIVE_Z,
-                            ] {
-                                gl.tex_image_2d(
-                                    face,
-                                    i as i32,
-                                    format_desc.internal as i32,
-                                    width as i32,
-                                    height as i32,
-                                    0,
-                                    format_desc.external,
-                                    format_desc.data_type,
-                                    glow::PixelUnpackData::Slice(None),
-                                );
-                            }
-                            width = max(1, width / 2);
-                            height = max(1, height / 2);
-                        }
-                    } else {
-                        let mut width = desc.size.width;
-                        let mut height = desc.size.height;
-                        for i in 0..desc.mip_level_count {
-                            gl.tex_image_2d(
-                                target,
-                                i as i32,
-                                format_desc.internal as i32,
-                                width as i32,
-                                height as i32,
-                                0,
-                                format_desc.external,
-                                format_desc.data_type,
-                                glow::PixelUnpackData::Slice(None),
-                            );
-                            width = max(1, width / 2);
-                            height = max(1, height / 2);
-                        }
-                    }
+                    self.shared
+                        .make_texture_storage(gl, raw, target, &storage, desc.label)
                 };
+                super::TextureInner::Texture { raw, target }
             }
-
-            #[cfg(native)]
-            if let Some(label) = desc.label {
-                if self
-                    .shared
-                    .private_caps
-                    .contains(PrivateCapabilities::DEBUG_FNS)
-                {
-                    let name = raw.0.get();
-                    unsafe { gl.object_label(glow::TEXTURE, name, Some(label)) };
-                }
-            }
-
-            unsafe { gl.bind_texture(target, None) };
-            super::TextureInner::Texture { raw, target }
         };
 
         self.counters.textures.add(1);
@@ -1190,7 +1051,10 @@ impl crate::Device for super::Device {
                     unsafe { gl.delete_renderbuffer(raw) };
                 }
                 super::TextureInner::DefaultRenderbuffer => {}
-                super::TextureInner::Texture { raw, .. } => {
+                super::TextureInner::Texture { raw, target } => {
+                    if target == super::UNDECIDED_TARGET {
+                        self.shared.undecided_textures.lock().remove(&raw);
+                    }
                     unsafe { gl.delete_texture(raw) };
                 }
                 #[cfg(webgl)]
@@ -1227,6 +1091,19 @@ impl crate::Device for super::Device {
         desc: &crate::TextureViewDescriptor,
     ) -> Result<super::TextureView, crate::DeviceError> {
         self.counters.texture_views.add(1);
+        // The first view that tells whether the texture is an array of layers
+        // or of cube maps makes it one.
+        if let super::TextureInner::Texture {
+            raw,
+            target: super::UNDECIDED_TARGET,
+        } = texture.inner
+        {
+            if let Some(told) = super::AdapterShared::view_target(desc.dimension) {
+                let gl = &self.shared.context.lock();
+                self.shared
+                    .texture_target(gl, raw, super::UNDECIDED_TARGET, Some(told));
+            }
+        }
         Ok(super::TextureView {
             //TODO: use `conv::map_view_dimension(desc.dimension)`?
             inner: texture.inner.clone(),
@@ -1505,13 +1382,28 @@ impl crate::Device for super::Device {
                     let sampler = desc.samplers[entry.resource_index as usize];
                     super::RawBinding::Sampler(sampler.raw)
                 }
-                wgt::BindingType::Texture { view_dimension, multisampled, .. } => {
+                wgt::BindingType::Texture {
+                    view_dimension,
+                    multisampled,
+                    ..
+                } => {
                     let view = desc.textures[entry.resource_index as usize].view;
                     if view.array_layers.start != 0 {
                         log::error!("Unable to create a sampled texture binding for non-zero array layer.\n{}",
                             "This is an implementation problem of wgpu-hal/gles backend.")
                     }
                     let (raw, target) = view.inner.as_native();
+                    let target = if target == super::UNDECIDED_TARGET {
+                        let gl = &self.shared.context.lock();
+                        self.shared.texture_target(
+                            gl,
+                            raw,
+                            target,
+                            super::AdapterShared::view_target(view_dimension),
+                        )
+                    } else {
+                        target
+                    };
 
                     super::Texture::log_failing_target_heuristics(
                         view_dimension,
@@ -1533,7 +1425,17 @@ impl crate::Device for super::Device {
                 } => {
                     let view = desc.textures[entry.resource_index as usize].view;
                     let format_desc = self.shared.describe_texture_format(format);
-                    let (raw, _target) = view.inner.as_native();
+                    let (raw, target) = view.inner.as_native();
+                    if target == super::UNDECIDED_TARGET {
+                        // Bound by name alone, but its storage must be made.
+                        let gl = &self.shared.context.lock();
+                        self.shared.texture_target(
+                            gl,
+                            raw,
+                            target,
+                            super::AdapterShared::view_target(view_dimension),
+                        );
+                    }
                     super::RawBinding::Image(super::ImageBinding {
                         raw,
                         mip_level: view.mip_levels.start,
@@ -1911,3 +1813,222 @@ impl crate::Device for super::Device {
 unsafe impl Sync for super::Device {}
 #[cfg(send_sync)]
 unsafe impl Send for super::Device {}
+
+impl super::AdapterShared {
+    /// Makes the storage of `raw`, a texture never bound before, as a texture
+    /// of `target`.
+    #[cfg_attr(not(native), allow(unused_variables))]
+    unsafe fn make_texture_storage(
+        &self,
+        gl: &glow::Context,
+        raw: glow::Texture,
+        target: super::BindTarget,
+        storage: &super::TextureStorage,
+        label: Option<&str>,
+    ) {
+        let format_desc = self.describe_texture_format(storage.format);
+
+        unsafe { gl.bind_texture(target, Some(raw)) };
+        //Note: this has to be done before defining the storage!
+        match storage.format.sample_type(None, Some(self.features)) {
+            Some(
+                wgt::TextureSampleType::Float { filterable: false }
+                | wgt::TextureSampleType::Uint
+                | wgt::TextureSampleType::Sint,
+            ) if target != glow::TEXTURE_2D_MULTISAMPLE => {
+                // reset default filtering mode
+                unsafe {
+                    gl.tex_parameter_i32(target, glow::TEXTURE_MIN_FILTER, glow::NEAREST as i32)
+                };
+                unsafe {
+                    gl.tex_parameter_i32(target, glow::TEXTURE_MAG_FILTER, glow::NEAREST as i32)
+                };
+            }
+            _ => {}
+        }
+
+        if conv::is_layered_target(target) {
+            unsafe {
+                if self
+                    .private_caps
+                    .contains(PrivateCapabilities::TEXTURE_STORAGE)
+                {
+                    gl.tex_storage_3d(
+                        target,
+                        storage.mip_level_count as i32,
+                        format_desc.internal,
+                        storage.size.width as i32,
+                        storage.size.height as i32,
+                        storage.size.depth_or_array_layers as i32,
+                    )
+                } else if target == glow::TEXTURE_3D {
+                    let mut width = storage.size.width;
+                    let mut height = storage.size.height;
+                    let mut depth = storage.size.depth_or_array_layers;
+                    for i in 0..storage.mip_level_count {
+                        gl.tex_image_3d(
+                            target,
+                            i as i32,
+                            format_desc.internal as i32,
+                            width as i32,
+                            height as i32,
+                            depth as i32,
+                            0,
+                            format_desc.external,
+                            format_desc.data_type,
+                            glow::PixelUnpackData::Slice(None),
+                        );
+                        width = max(1, width / 2);
+                        height = max(1, height / 2);
+                        depth = max(1, depth / 2);
+                    }
+                } else {
+                    let mut width = storage.size.width;
+                    let mut height = storage.size.height;
+                    for i in 0..storage.mip_level_count {
+                        gl.tex_image_3d(
+                            target,
+                            i as i32,
+                            format_desc.internal as i32,
+                            width as i32,
+                            height as i32,
+                            storage.size.depth_or_array_layers as i32,
+                            0,
+                            format_desc.external,
+                            format_desc.data_type,
+                            glow::PixelUnpackData::Slice(None),
+                        );
+                        width = max(1, width / 2);
+                        height = max(1, height / 2);
+                    }
+                }
+            };
+        } else if storage.sample_count > 1 {
+            unsafe {
+                gl.tex_storage_2d_multisample(
+                    target,
+                    storage.sample_count as i32,
+                    format_desc.internal,
+                    storage.size.width as i32,
+                    storage.size.height as i32,
+                    true,
+                )
+            };
+        } else {
+            unsafe {
+                if self
+                    .private_caps
+                    .contains(PrivateCapabilities::TEXTURE_STORAGE)
+                {
+                    gl.tex_storage_2d(
+                        target,
+                        storage.mip_level_count as i32,
+                        format_desc.internal,
+                        storage.size.width as i32,
+                        storage.size.height as i32,
+                    )
+                } else if target == glow::TEXTURE_CUBE_MAP {
+                    let mut width = storage.size.width;
+                    let mut height = storage.size.height;
+                    for i in 0..storage.mip_level_count {
+                        for face in [
+                            glow::TEXTURE_CUBE_MAP_POSITIVE_X,
+                            glow::TEXTURE_CUBE_MAP_NEGATIVE_X,
+                            glow::TEXTURE_CUBE_MAP_POSITIVE_Y,
+                            glow::TEXTURE_CUBE_MAP_NEGATIVE_Y,
+                            glow::TEXTURE_CUBE_MAP_POSITIVE_Z,
+                            glow::TEXTURE_CUBE_MAP_NEGATIVE_Z,
+                        ] {
+                            gl.tex_image_2d(
+                                face,
+                                i as i32,
+                                format_desc.internal as i32,
+                                width as i32,
+                                height as i32,
+                                0,
+                                format_desc.external,
+                                format_desc.data_type,
+                                glow::PixelUnpackData::Slice(None),
+                            );
+                        }
+                        width = max(1, width / 2);
+                        height = max(1, height / 2);
+                    }
+                } else {
+                    let mut width = storage.size.width;
+                    let mut height = storage.size.height;
+                    for i in 0..storage.mip_level_count {
+                        gl.tex_image_2d(
+                            target,
+                            i as i32,
+                            format_desc.internal as i32,
+                            width as i32,
+                            height as i32,
+                            0,
+                            format_desc.external,
+                            format_desc.data_type,
+                            glow::PixelUnpackData::Slice(None),
+                        );
+                        width = max(1, width / 2);
+                        height = max(1, height / 2);
+                    }
+                }
+            };
+        }
+
+        #[cfg(native)]
+        if let Some(label) = label {
+            if self.private_caps.contains(PrivateCapabilities::DEBUG_FNS) {
+                let name = raw.0.get();
+                unsafe { gl.object_label(glow::TEXTURE, name, Some(label)) };
+            }
+        }
+
+        unsafe { gl.bind_texture(target, None) };
+    }
+
+    /// The target that a view of `dimension` tells a texture of undecided
+    /// target to be made with, if it tells.
+    pub(super) fn view_target(dimension: wgt::TextureViewDimension) -> Option<super::BindTarget> {
+        match dimension {
+            wgt::TextureViewDimension::D2Array => Some(glow::TEXTURE_2D_ARRAY),
+            wgt::TextureViewDimension::Cube => Some(glow::TEXTURE_CUBE_MAP),
+            wgt::TextureViewDimension::CubeArray => Some(glow::TEXTURE_CUBE_MAP_ARRAY),
+            _ => None,
+        }
+    }
+
+    /// The target of `raw`, a texture made with `target`: `target`, unless it
+    /// is [`super::UNDECIDED_TARGET`]. Then it is the target the texture was
+    /// made with, or, if its storage is still to be made, `told` (a view's)
+    /// or else cube maps, with which the storage is made now.
+    pub(super) fn texture_target(
+        &self,
+        gl: &glow::Context,
+        raw: glow::Texture,
+        target: super::BindTarget,
+        told: Option<super::BindTarget>,
+    ) -> super::BindTarget {
+        if target != super::UNDECIDED_TARGET {
+            return target;
+        }
+        let mut textures = self.undecided_textures.lock();
+        let Some(chosen) = textures.get_mut(&raw) else {
+            log::error!("wgpu-hal: a texture of undecided target is not known");
+            return glow::TEXTURE_2D_ARRAY;
+        };
+        match chosen {
+            &mut super::TextureTarget::Chosen(target) => target,
+            super::TextureTarget::Pending { storage, label } => {
+                let target = told.unwrap_or(if storage.size.depth_or_array_layers == 6 {
+                    glow::TEXTURE_CUBE_MAP
+                } else {
+                    glow::TEXTURE_CUBE_MAP_ARRAY
+                });
+                unsafe { self.make_texture_storage(gl, raw, target, storage, label.as_deref()) };
+                *chosen = super::TextureTarget::Chosen(target);
+                target
+            }
+        }
+    }
+}
