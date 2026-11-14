@@ -520,6 +520,9 @@ impl Texture {
             wgt::TextureDimension::D2 => {
                 // HACK: detect a cube map; forces cube compatible textures to be cube textures
                 match (desc.is_cube_compatible(), desc.size.depth_or_array_layers) {
+                    // Multisampled textures have a target of their own: storage
+                    // for samples cannot be given to a `TEXTURE_2D`.
+                    (false, 1) if desc.sample_count > 1 => glow::TEXTURE_2D_MULTISAMPLE,
                     (false, 1) => glow::TEXTURE_2D,
                     (false, _) => glow::TEXTURE_2D_ARRAY,
                     (true, 6) => glow::TEXTURE_CUBE_MAP,
@@ -545,8 +548,16 @@ impl Texture {
     }
 
     /// More information can be found in issues #1614 and #1574
-    fn log_failing_target_heuristics(view_dimension: wgt::TextureViewDimension, target: u32) {
-        let expected_target = Self::target_for_view_dimension(view_dimension);
+    fn log_failing_target_heuristics(
+        view_dimension: wgt::TextureViewDimension,
+        multisampled: bool,
+        target: u32,
+    ) {
+        let expected_target = if multisampled {
+            glow::TEXTURE_2D_MULTISAMPLE
+        } else {
+            Self::target_for_view_dimension(view_dimension)
+        };
 
         if expected_target == target {
             return;
@@ -555,6 +566,7 @@ impl Texture {
         let buffer;
         let got = match target {
             glow::TEXTURE_2D => "D2",
+            glow::TEXTURE_2D_MULTISAMPLE => "D2 (multisampled)",
             glow::TEXTURE_2D_ARRAY => "D2Array",
             glow::TEXTURE_CUBE_MAP => "Cube",
             glow::TEXTURE_CUBE_MAP_ARRAY => "CubeArray",

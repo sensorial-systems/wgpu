@@ -115,6 +115,13 @@ changes, kept for reference.
   (a POCO X7's Mali-G615) calls incomplete, so that nothing was drawn:
   branding-motion's intro, in Revving, came out black. With a depth
   attachment the colour is resolved by a blit, as where it is stored.
+- **Multisampled textures as `TEXTURE_2D_MULTISAMPLE`** (`wgpu-hal/src/gles`):
+  a multisampled texture that is also read (`TEXTURE_BINDING`, so not a
+  renderbuffer) was made a `TEXTURE_2D`, which `glTexStorage2DMultisample`
+  cannot give samples to: it had no storage, and every framebuffer it was
+  in was invalid. It is now made, attached and bound with the multisampled
+  target, without the sampler state GLES refuses on it. Revving's High,
+  whose multisampled depth the smoke reads, drew nothing of the engine.
 
 ## What trunk changed for its users
 
