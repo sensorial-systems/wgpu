@@ -1081,15 +1081,11 @@ impl<'a, W: Write> Writer<'a, W> {
                 match built_in {
                     crate::BuiltIn::Position { invariant: true } => {
                         match (self.options.version, self.entry_point.stage) {
-                            (
-                                Version::Embedded {
-                                    version: 300,
-                                    is_webgl: true,
-                                },
-                                ShaderStage::Fragment,
-                            ) => {
-                                // `invariant gl_FragCoord` is not allowed in WebGL2 and possibly
-                                // OpenGL ES in general (waiting on confirmation).
+                            (Version::Embedded { .. }, ShaderStage::Fragment) => {
+                                // `invariant gl_FragCoord` is not allowed in WebGL2, nor in
+                                // OpenGL ES: GLSL ES makes only a shader's outputs invariant,
+                                // and PowerVR Rogue's compiler refuses the shader ("only
+                                // shader outputs can be made invariant").
                                 //
                                 // See https://github.com/KhronosGroup/WebGL/issues/3518
                             }
